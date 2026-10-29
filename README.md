@@ -18,6 +18,7 @@ agents over MCP. Both use the same engine.
 | [`service/`](service) | The hosted service: projects in Supabase and R2, an HTTP API and an MCP endpoint. |
 | [`frontend-web/`](frontend-web) | The hosted web app. |
 | [`examples/lbo/`](examples/lbo) | A complete sample LBO, checked against an independent calculation. |
+| [`skills/`](skills) | Agent Skills for building and editing models through the hosted MCP connector. |
 | [`docs/`](docs) | The [agent guide](docs/agent-guide.md), the [user guide](docs/user-guide.md) for the hosted version, [deployment](docs/deployment.md) and the [design](docs/PLAN.md). |
 
 ## Branches
@@ -259,4 +260,6 @@ cd frontend-web && npm ci && npm run dev
 ```
 
 The [user guide](docs/user-guide.md) covers the web app, the HTTP API and MCP;
-[deployment](docs/deployment.md) covers Supabase, R2, Render and Vercel.
+[deployment](docs/deployment.md) covers Supabase, R2, Render and Vercel. For AI agents,
+add the MCP connector `https://epm-nm1g.onrender.com/mcp` and the
+[skills](skills/README.md) `epm-create-model` and `epm-edit-model`.
