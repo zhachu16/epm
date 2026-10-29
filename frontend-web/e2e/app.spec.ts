@@ -219,3 +219,38 @@ test("drags graph nodes, and resets the layout", async ({ page, request }) => {
   await page.getByTestId("reset-layout").click();
   await expect.poll(() => node.evaluate((el) => (el as HTMLElement).style.transform)).toBe(laidOut);
 });
+
+test("renaming a project saves a version, and editing carries on without a conflict", async ({ page, request }) => {
+  const id = await copyExample(request, "Before");
+  await openProject(page, id);
+  page.once("dialog", (dialog) => dialog.accept("After"));
+  await page.getByTestId("project-name").click();
+  await expect(page.getByTestId("project-name")).toHaveText("After");
+  await expect(page.getByTestId("save-status")).toHaveText("Saved · v2");
+  await page.getByTestId("bottom-versions").click();
+  await expect(page.getByTestId("version-2")).toContainText("rename to After");
+
+  await openFromExplorer(page, "metric:tax_rate", "tax_rate");
+  await page.getByTestId("metric-value").fill("0.3");
+  await page.getByTestId("save").click();
+  await expect(page.getByTestId("save-status")).toHaveText("Saved · v3");
+  await expect(page.getByTestId("editor-errors")).toBeHidden();
+});
+
+test("renaming the model in its settings renames the project", async ({ page, request, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const id = await copyExample(request, "Settings");
+  await openProject(page, id);
+  await openFromExplorer(page, "file:settings", "settings");
+  await expect(page.getByTestId("definition-json")).toContainText('"name": "Settings"');
+  await page.locator('[data-testid="definition-json"] .monaco-editor').click();
+  await page.keyboard.press("ControlOrMeta+A");
+  const json = '{"name": "Renamed in settings", "currency": "USD", "default_axis": "fy", "key_outputs": ["equity_irr", "moic", "equity_irr_3y"]}';
+  await page.evaluate((text) => navigator.clipboard.writeText(text), json);
+  await page.keyboard.press("ControlOrMeta+V");
+  await expect(page.getByTestId("action-status")).toHaveText("Unsaved changes");
+  await page.keyboard.press("ControlOrMeta+S");
+  await expect(page.getByTestId("project-name")).toHaveText("Renamed in settings");
+  const project = await (await request.get(`/api/projects/${id}`)).json();
+  expect(project.name).toBe("Renamed in settings");
+});
