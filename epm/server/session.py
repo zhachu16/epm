@@ -139,45 +139,12 @@ class Session:
 
     def run_cli(self, argv: list[str], source: str = "cli") -> dict[str, Any]:
         """Run an ``fm`` command against the live workspace and capture its output."""
-        import click
-        import typer
-        from typer.testing import CliRunner
-
-        from ..cli.app import State, app
-
-        out: list[str] = []
-        err: list[str] = []
         with self.lock:
             before = self._snapshot()
             try:
-                if any(a in ("--help", "-h") for a in argv) or not argv:
-                    # help text goes straight to stdout, so capture it the slow way
-                    result = CliRunner().invoke(app, argv or ["--help"])
-                    out.append(result.output.rstrip("\n"))
-                    code = result.exit_code
-                else:
-                    state = State(None, False, workspace=self.ws, out=out.append, err=err.append)
-                    command = typer.main.get_command(app)
-                    try:
-                        rv = command.main(
-                            args=list(argv), prog_name="fm", standalone_mode=False, obj=state
-                        )
-                        code = rv if isinstance(rv, int) else 0
-                    except click.ClickException as e:
-                        err.append(f"error: {e.format_message()}")
-                        code = e.exit_code
-                    except click.exceptions.Abort:
-                        code = 1
-                    except Exception as e:  # noqa: BLE001
-                        err.append(f"error: {type(e).__name__}: {e}")
-                        code = 1
+                return run_cli(self.ws, argv)
             finally:
                 self._announce(before, source)
-        return {
-            "stdout": "".join(f"{line}\n" for line in out),
-            "stderr": "".join(f"{line}\n" for line in err),
-            "exit_code": code,
-        }
 
     # -- what the UI shows -----------------------------------------------------------------
 
@@ -263,6 +230,45 @@ def workspace_snapshot(ws: Workspace, path: str | None = None) -> dict[str, Any]
         ],
     }
     return clean(payload)
+
+
+def run_cli(ws: Workspace, argv: list[str]) -> dict[str, Any]:
+    """Run an ``fm`` command in-process against ``ws`` and capture its output.
+
+    Commands that change the model change ``ws``; saving is up to the caller.
+    """
+    import click
+    import typer
+    from typer.testing import CliRunner
+
+    from ..cli.app import State, app
+
+    out: list[str] = []
+    err: list[str] = []
+    if any(a in ("--help", "-h") for a in argv) or not argv:
+        # help text goes straight to stdout, so capture it the slow way
+        result = CliRunner().invoke(app, argv or ["--help"])
+        out.append(result.output.rstrip("\n"))
+        code = result.exit_code
+    else:
+        state = State(None, False, workspace=ws, out=out.append, err=err.append)
+        command = typer.main.get_command(app)
+        try:
+            rv = command.main(args=list(argv), prog_name="fm", standalone_mode=False, obj=state)
+            code = rv if isinstance(rv, int) else 0
+        except click.ClickException as e:
+            err.append(f"error: {e.format_message()}")
+            code = e.exit_code
+        except click.exceptions.Abort:
+            code = 1
+        except Exception as e:  # noqa: BLE001
+            err.append(f"error: {type(e).__name__}: {e}")
+            code = 1
+    return {
+        "stdout": "".join(f"{line}\n" for line in out),
+        "stderr": "".join(f"{line}\n" for line in err),
+        "exit_code": code,
+    }
 
 
 def _graph_groups(model) -> dict[str, str]:
