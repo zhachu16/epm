@@ -1,5 +1,15 @@
-from .engine import Engine, Step
+from .engine import Engine
 from .graph import DependencyGraph
-from .results import CheckResult, MetricStatus, RunResult
+from .planner import Block, Step
+from .results import CheckResult, MetricStatus, RunResult, SolverStats
 
-__all__ = ["CheckResult", "DependencyGraph", "Engine", "MetricStatus", "RunResult", "Step"]
+__all__ = [
+    "Block",
+    "CheckResult",
+    "DependencyGraph",
+    "Engine",
+    "MetricStatus",
+    "RunResult",
+    "SolverStats",
+    "Step",
+]

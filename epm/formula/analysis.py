@@ -69,3 +69,25 @@ def infer_shape(node: Node, shape_of: Callable[[str], Shape], env: FormulaEnv) -
         varargs = [infer_shape(v, shape_of, env) for v in node.varargs]
         return BUILTINS[node.func].shape(node, args, varargs, env)
     raise TypeError(f"unexpected node {node!r}")
+
+
+def scope_start(node: Node, start_of: Callable[[str], int]) -> int:
+    """First axis position at which ``node`` can have a value.
+
+    A forecast-only metric starts at the first forecast period; anything combining it
+    point by point starts there too. Reductions produce scalars, which have no start.
+    """
+    if isinstance(node, Num):
+        return 0
+    if isinstance(node, Ref):
+        return start_of(node.name)
+    if isinstance(node, Unary):
+        return scope_start(node.operand, start_of)
+    if isinstance(node, Binary):
+        return max(scope_start(node.left, start_of), scope_start(node.right, start_of))
+    if isinstance(node, Call):
+        if BUILTINS[node.func].reduces(node):
+            return 0
+        children = [*node.args.values(), *node.varargs]
+        return max((scope_start(c, start_of) for c in children), default=0)
+    raise TypeError(f"unexpected node {node!r}")

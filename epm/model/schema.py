@@ -179,6 +179,9 @@ class Metric(_Base):
     input: Binding | None = None
     formula: str | None = None
     history: Binding | None = None
+    # "forecast": the metric only exists in forecast periods (e.g. post-deal debt), so
+    # prev() starts at the first forecast period. Omitted means inferred from references.
+    scope: Literal["all", "forecast"] | None = None
 
     @model_validator(mode="after")
     def _one_definition(self) -> Metric:
@@ -190,7 +193,33 @@ class Metric(_Base):
                 raise ValueError("'history' needs a 'formula' for the forecast periods")
             if self.history.item is None:
                 raise ValueError("'history' must bind a series ('item'), not a single cell")
+            if self.scope == "forecast":
+                raise ValueError("a forecast-only metric cannot have 'history'")
         return self
+
+
+class Circularity(_Base):
+    """A declared same-period loop, solved by fixed-point iteration.
+
+    Iteration stops when no member changes by more than ``tol`` (in the members' units)
+    between sweeps. ``damping`` < 1 blends each new value with the previous one, which can
+    help oscillating loops converge.
+    """
+
+    metrics: list[str] = Field(min_length=1)
+    seed: float = 0.0
+    tol: float = Field(default=1e-9, gt=0)
+    max_iter: int = Field(default=100, ge=1, le=10_000)
+    damping: float = Field(default=1.0, gt=0, le=1)
+    folder: str | None = None
+    description: str | None = None
+
+    @field_validator("metrics")
+    @classmethod
+    def _unique(cls, v: list[str]) -> list[str]:
+        if len(set(v)) != len(v):
+            raise ValueError("circularity metrics must be unique")
+        return v
 
 
 class TableRow(_Base):
@@ -230,10 +259,11 @@ class Model(_Base):
     axes: dict[str, Axis] = Field(default_factory=dict)
     sources: dict[str, Source] = Field(default_factory=dict)
     metrics: dict[str, Metric] = Field(default_factory=dict)
+    circularities: dict[str, Circularity] = Field(default_factory=dict)
     tables: dict[str, Table] = Field(default_factory=dict)
     checks: dict[str, Check] = Field(default_factory=dict)
 
-    @field_validator("axes", "sources", "tables", "checks")
+    @field_validator("axes", "sources", "circularities", "tables", "checks")
     @classmethod
     def _names(cls, v: dict, info) -> dict:
         kind = info.field_name.rstrip("s")

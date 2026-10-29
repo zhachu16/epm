@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -35,6 +36,8 @@ class FormulaEnv:
     axes: dict[str, AxisInfo]
     metric_axis: str | None = None
     default_axis: str | None = None
+    # first in-scope position of each forecast-only metric; absent means 0 (all periods)
+    starts: Mapping[str, int] = field(default_factory=dict)
 
     def resolve_axis(self, name: str | None, func: str, col: int | None = None) -> AxisInfo:
         chosen = name or self.metric_axis or self.default_axis

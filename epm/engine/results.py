@@ -47,6 +47,31 @@ class CheckResult:
         }
 
 
+@dataclass
+class SolverStats:
+    """How a declared circularity was solved in one run.
+
+    For a loop inside a period recurrence, ``periods`` gives iterations per period and
+    ``iterations`` is the largest of them.
+    """
+
+    circularity: str
+    converged: bool
+    iterations: int
+    residual: float
+    periods: dict[str, int] | None = None
+    message: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "converged": self.converged,
+            "iterations": self.iterations,
+            "residual": _number(self.residual),
+            "periods": self.periods,
+            "message": self.message,
+        }
+
+
 def _number(v: Any) -> Any:
     if isinstance(v, bool | np.bool_):
         return bool(v)
@@ -74,6 +99,7 @@ class RunResult:
     status: dict[str, MetricStatus]
     checks: dict[str, CheckResult]
     diagnostics: list[Diagnostic]
+    solver: dict[str, SolverStats] = field(default_factory=dict)
 
     def __getitem__(self, name: str) -> Any:
         return self.values[name]
@@ -92,5 +118,6 @@ class RunResult:
             "values": {k: value_to_dict(v) for k, v in self.values.items()},
             "status": {k: s.to_dict() for k, s in self.status.items()},
             "checks": {k: c.to_dict() for k, c in self.checks.items()},
+            "solver": {k: v.to_dict() for k, v in self.solver.items()},
             "diagnostics": [d.to_dict() for d in self.diagnostics],
         }

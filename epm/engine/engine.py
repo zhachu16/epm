@@ -6,7 +6,8 @@ Planning works on the dependency graph's strongly connected components:
   series at once;
 * a component whose cycles all pass through ``prev()`` is a **recurrence** (e.g.
   ``cash = prev(cash) + fcf``) and is stepped one period at a time;
-* a component with a same-period cycle is a **circular reference** and is rejected.
+* a component with a same-period cycle is a **circular reference**: solved by iteration
+  if declared under ``circularities``, rejected otherwise (see :mod:`.planner`).
 
 Metrics can take values from CSV/XLSX sources: ``input`` binds the whole metric, while
 ``history`` fills historical periods from a source and leaves forecast periods to the
@@ -26,7 +27,6 @@ import pandas as pd
 
 from ..errors import Diagnostic, EpmError, FormulaError
 from ..formula import (
-    FULL,
     SCALAR,
     UNKNOWN,
     AxisInfo,
@@ -36,6 +36,7 @@ from ..formula import (
     parse_formula,
     references,
 )
+from ..formula.analysis import scope_start
 from ..formula.compiler import Evaluator
 from ..formula.ir import Node
 from ..formula.shapes import Shape, describe, join
@@ -43,8 +44,9 @@ from ..formula.units import ANY, CONFLICT, Unit, UnitIssue, infer_unit, unit_key
 from ..formula.units import join as join_units
 from ..model.schema import Binding, Check, Metric, Model
 from ..sources import DirectoryFiles, FileProvider, SourceError, SourceLoader
-from .graph import DependencyGraph, Lag, find_cycle, topo_order
-from .results import CheckResult, MetricStatus, RunResult
+from .graph import DependencyGraph, Lag
+from .planner import Step, plan
+from .results import CheckResult, MetricStatus, RunResult, SolverStats
 
 Override = float | int | Mapping[Any, float | None] | pd.Series
 
@@ -58,6 +60,7 @@ class CompiledMetric:
     shape: Shape = UNKNOWN
     unit: Unit = ANY
     history: np.ndarray | None = None  # source values; only historical positions are used
+    start: int = 0  # first in-scope axis position (> 0 for forecast-only metrics)
     node: Node | None = None
     refs: dict[str, Lag] = field(default_factory=dict)
     evaluator: Evaluator | None = None
@@ -72,12 +75,11 @@ class CompiledCheck:
     refs: dict[str, Lag] = field(default_factory=dict)
     evaluator: Evaluator | None = None
     error: Diagnostic | None = None
+    start: int = 0
 
 
-@dataclass
-class Step:
-    kind: Literal["single", "recurrence"]
-    members: list[str]  # evaluation order within the step
+class SolverError(Exception):
+    pass
 
 
 class Engine:
@@ -102,15 +104,18 @@ class Engine:
         self.files = DirectoryFiles(files) if isinstance(files, str | Path) else files
         self.sources = sources or SourceLoader(model.sources, self.files)
         self.diagnostics: list[Diagnostic] = []
+        self.starts: dict[str, int] = {}  # filled by scope inference, read by compiled formulas
         self.axes = self._build_axes()
         self._source_errors = self._validate_sources()
         self._unmatched_reported: set[tuple[str, str]] = set()
         self.metrics = {name: self._prepare(name, m) for name, m in model.metrics.items()}
         self._infer_shapes()
         self._infer_units()
+        self._infer_scopes()
         for cm in self.metrics.values():
             self._compile(cm)
         self.graph = DependencyGraph({n: cm.refs for n, cm in self.metrics.items()})
+        self._validate_circularities()
         self.steps = self._plan()
         self.checks = {name: self._prepare_check(name, c) for name, c in model.checks.items()}
         self._validate_tables()
@@ -168,7 +173,7 @@ class Engine:
         return m.axis or source_axis or self.default_axis
 
     def _env(self, metric_axis: str | None) -> FormulaEnv:
-        return FormulaEnv(self.axes, metric_axis, self.default_axis)
+        return FormulaEnv(self.axes, metric_axis, self.default_axis, self.starts)
 
     def _unknown_refs(self, obj: str, refs: Iterable[str]) -> list[str]:
         unknown = [r for r in refs if r not in self.model.metrics]
@@ -293,6 +298,38 @@ class Engine:
                     f"'{cm.declared_axis}'",
                 )
 
+    def _infer_scopes(self) -> None:
+        """Find forecast-only metrics: declared, or reading one point by point."""
+
+        def forecast_start(cm: CompiledMetric) -> int:
+            return int(self.axes[cm.shape].historical.sum())  # type: ignore[index]
+
+        pending = []
+        for cm in self.metrics.values():
+            if not isinstance(cm.shape, str) or cm.shape not in self.axes:
+                continue
+            scope = cm.definition.scope
+            if scope == "forecast":
+                cm.start = forecast_start(cm)
+            elif (
+                scope is None
+                and cm.kind == "formula"
+                and cm.definition.history is None
+                and cm.node is not None
+                and cm.error is None
+            ):
+                pending.append(cm)
+        lookup = lambda n: self.metrics[n].start if n in self.metrics else 0  # noqa: E731
+        for _ in range(len(pending) + 1):
+            changed = False
+            for cm in pending:
+                new = min(scope_start(cm.node, lookup), forecast_start(cm))  # type: ignore[arg-type]
+                if new > cm.start:
+                    cm.start, changed = new, True
+            if not changed:
+                break
+        self.starts.update({n: cm.start for n, cm in self.metrics.items() if cm.start})
+
     def _unit_of(self, name: str) -> Unit:
         cm = self.metrics.get(name)
         return ANY if cm is None else cm.unit
@@ -383,9 +420,9 @@ class Engine:
                 return
             if isinstance(loaded, np.ndarray):
                 ax = self.axes[cm.shape]  # type: ignore[index]
-                cm.constant = pd.Series(loaded, index=ax.index, name=cm.name)
+                cm.constant = self._mask(cm, pd.Series(loaded, index=ax.index, name=cm.name))
             else:
-                cm.constant = self._broadcast(cm, np.float64(loaded))
+                cm.constant = self._mask(cm, self._broadcast(cm, np.float64(loaded)))
             return
         if cm.kind == "formula":
             if cm.definition.history is not None:
@@ -403,7 +440,7 @@ class Engine:
             return
         value = cm.definition.value
         if not isinstance(value, dict):
-            cm.constant = self._broadcast(cm, np.float64(value))
+            cm.constant = self._mask(cm, self._broadcast(cm, np.float64(value)))
             return
         ax = self.axes[cm.shape]  # type: ignore[index]
         data = np.full(len(ax), np.nan)
@@ -420,56 +457,47 @@ class Engine:
                 cm, "invalid_value", f"values for {bad} are not on axis '{ax.name}'", keys=bad
             )
             return
-        cm.constant = pd.Series(data, index=ax.index, name=cm.name)
+        cm.constant = self._mask(cm, pd.Series(data, index=ax.index, name=cm.name))
+
+    def _validate_circularities(self) -> None:
+        seen: dict[str, str] = {}
+        for name, circ in self.model.circularities.items():
+            obj = f"circularity:{name}"
+            self._unknown_refs(obj, circ.metrics)
+            for m in circ.metrics:
+                if m in seen:
+                    self._error(
+                        obj,
+                        "duplicate_member",
+                        f"'{m}' is already in circularity '{seen[m]}'",
+                        metric=m,
+                    )
+                seen.setdefault(m, name)
 
     def _plan(self) -> list[Step]:
-        steps: list[Step] = []
-        for comp in self.graph.components():
-            first = self.metrics[comp[0]]
-            if len(comp) == 1 and comp[0] not in first.refs:
-                steps.append(Step("single", comp))
-                continue
-            members = set(comp)
-            same_period = {
-                m: [d for d, lag in self.metrics[m].refs.items() if d in members and not lag]
-                for m in comp
-            }
-            cycle = find_cycle(comp, same_period)
-            if cycle is not None:
-                message = f"circular reference: {' → '.join(cycle)}"
-                if len(cycle) == 2:
-                    message += f"; use prev({cycle[0]}) to refer to the previous period"
-                for m in comp:
-                    self._fail(self.metrics[m], "circular_reference", message, path=cycle)
-                steps.extend(Step("single", [m]) for m in comp)
-                continue
-            noncausal = [
-                (m, d)
-                for m in comp
-                for d, lag in self.metrics[m].refs.items()
-                if d in members and lag is FULL
-            ]
-            if noncausal:
-                m, d = noncausal[0]
-                message = (
-                    f"'{m}' reads every period of '{d}' (e.g. total() or next()), but '{d}' "
-                    f"depends on '{m}' through prev(); this cannot be evaluated period by period"
+        circularities = {
+            name: c.model_copy(update={"metrics": [m for m in c.metrics if m in self.metrics]})
+            for name, c in self.model.circularities.items()
+        }
+
+        def fail(metric: str, code: str, message: str, detail: dict) -> None:
+            self._fail(self.metrics[metric], code, message, **detail)
+
+        steps, used = plan(
+            {n: cm.refs for n, cm in self.metrics.items()},
+            {n: cm.shape for n, cm in self.metrics.items()},
+            circularities,
+            fail,
+        )
+        for name in self.model.circularities:
+            if name not in used and not any(
+                d.object == f"circularity:{name}" for d in self.diagnostics
+            ):
+                self._warn(
+                    f"circularity:{name}",
+                    "unused_circularity",
+                    "these metrics do not form a same-period loop, so nothing is iterated",
                 )
-                for name in comp:
-                    self._fail(self.metrics[name], "noncausal_recurrence", message, pair=[m, d])
-                steps.extend(Step("single", [m]) for m in comp)
-                continue
-            shapes = {self.metrics[m].shape for m in comp}
-            if len(shapes) != 1 or SCALAR in shapes:
-                message = (
-                    "metrics in a period recurrence must all be series on one axis; got "
-                    + ", ".join(f"{m}: {describe(self.metrics[m].shape)}" for m in comp)
-                )
-                for name in comp:
-                    self._fail(self.metrics[name], "recurrence_axis", message)
-                steps.extend(Step("single", [m]) for m in comp)
-                continue
-            steps.append(Step("recurrence", topo_order(comp, same_period)))
         return steps
 
     def _prepare_check(self, name: str, c: Check) -> CompiledCheck:
@@ -484,6 +512,7 @@ class Engine:
             env = self._env(None)
             infer_shape(node, self._shape_of, env)
             cc.evaluator = compile_formula(node, env)
+            cc.start = scope_start(node, lambda n: self.starts.get(n, 0))
         except FormulaError as e:
             cc.error = self._error(obj, e.code, e.message, **e.detail)
             return cc
@@ -558,6 +587,7 @@ class Engine:
                     "formula": None,
                     "history": None,
                     "axis": axis,
+                    "scope": "forecast" if cm.start else None,
                 }
             )
         model = self.model.model_copy(update={"metrics": metrics})
@@ -592,14 +622,17 @@ class Engine:
         values: dict[str, Any] = {}
         status: dict[str, MetricStatus] = {}
         diagnostics: list[Diagnostic] = []
+        solver: dict[str, SolverStats] = {}
         with np.errstate(all="ignore"):
             for step in self.steps:
                 if needed is not None and needed.isdisjoint(step.members):
                     continue
                 if step.kind == "single":
                     self._eval_single(step.members[0], values, status, diagnostics)
+                elif step.kind == "circular":
+                    self._eval_circular(step, values, status, diagnostics, solver)
                 else:
-                    self._eval_recurrence(step.members, values, status, diagnostics)
+                    self._eval_recurrence(step, values, status, diagnostics, solver)
             check_results = self._run_checks(values, status, diagnostics) if run_checks else {}
 
         shown = selected if selected is not None else [n for n in self.metrics if n in status]
@@ -608,6 +641,7 @@ class Engine:
             status={n: status[n] for n in shown},
             checks=check_results,
             diagnostics=[*self.diagnostics, *diagnostics],
+            solver=solver,
         )
 
     @staticmethod
@@ -641,6 +675,52 @@ class Engine:
         data[mask] = cm.history[mask]
         return pd.Series(data, index=value.index, name=cm.name)
 
+    @staticmethod
+    def _mask(cm: CompiledMetric, value: Any) -> Any:
+        """Blank out the periods before a forecast-only metric exists."""
+        if not cm.start or not isinstance(value, pd.Series):
+            return value
+        data = value.to_numpy(dtype=float, copy=True)
+        data[: cm.start] = np.nan
+        return pd.Series(data, index=value.index, name=cm.name)
+
+    def _finish(self, cm: CompiledMetric, raw: Any) -> Any:
+        """Shape a formula result, then apply history and scope."""
+        return self._mask(cm, self._with_history(cm, self._broadcast(cm, raw)))
+
+    def _computes_at(self, cm: CompiledMetric, t: int, ax: AxisInfo) -> bool:
+        """Whether period ``t`` comes from the formula (not history, not out of scope)."""
+        if t < cm.start:
+            return False
+        return not (cm.history is not None and ax.historical[t])
+
+    def _ready(self, members: list[str], status: dict[str, MetricStatus]) -> bool:
+        """Mark a group errored or blocked if it, or anything it reads, has errors."""
+        group = set(members)
+        broken = next((m for m in members if self.metrics[m].error is not None), None)
+        if broken is not None:
+            for m in members:
+                cm = self.metrics[m]
+                status[m] = (
+                    MetricStatus("error", cm.error.message)
+                    if cm.error is not None
+                    else MetricStatus("blocked", f"evaluated with '{broken}', which has errors")
+                )
+            return False
+        external = {d for m in members for d in self.metrics[m].refs if d not in group}
+        bad = self._failed_dep(external, status)
+        if bad is not None:
+            for m in members:
+                status[m] = MetricStatus("blocked", f"depends on '{bad}', which has errors")
+            return False
+        return True
+
+    def _group_failed(self, members, message, code, values, status, diagnostics) -> None:
+        for name in members:
+            values.pop(name, None)
+            status[name] = MetricStatus("error", message)
+        diagnostics.append(Diagnostic("error", code, message, f"metric:{members[0]}"))
+
     def _value_status(
         self,
         cm: CompiledMetric,
@@ -653,6 +733,8 @@ class Engine:
         except (TypeError, ValueError):
             return MetricStatus("ok")
         missing, infinite = np.isnan(data), np.isinf(data)
+        if cm.start:
+            missing[: cm.start] = False
         if not (missing.any() or infinite.any()):
             return MetricStatus("ok")
         labels = list(value.index) if isinstance(value, pd.Series) else None
@@ -678,18 +760,10 @@ class Engine:
 
     def _eval_single(self, name, values, status, diagnostics) -> None:
         cm = self.metrics[name]
-        if cm.error is not None:
-            status[name] = MetricStatus("error", cm.error.message)
-            return
-        bad = self._failed_dep(cm.refs, status)
-        if bad is not None:
-            status[name] = MetricStatus("blocked", f"depends on '{bad}', which has errors")
+        if not self._ready([name], status):
             return
         try:
-            if cm.kind == "formula":
-                value = self._with_history(cm, self._broadcast(cm, cm.evaluator(values)))
-            else:
-                value = cm.constant
+            value = self._finish(cm, cm.evaluator(values)) if cm.kind == "formula" else cm.constant
         except Exception as e:  # noqa: BLE001 - any calculation failure is reported, not raised
             message = f"{type(e).__name__}: {e}"
             status[name] = MetricStatus("error", message)
@@ -698,56 +772,153 @@ class Engine:
         values[name] = value
         status[name] = self._value_status(cm, value, status, diagnostics)
 
-    def _eval_recurrence(self, members, values, status, diagnostics) -> None:
-        """Step through periods; within each period, members go in same-period order.
+    def _eval_circular(self, step: Step, values, status, diagnostics, solver) -> None:
+        """Solve a declared same-period loop by iterating over whole series (Gauss-Seidel)."""
+        members = step.members
+        if not self._ready(members, status):
+            return
+        name = step.circularity
+        circ = self.model.circularities[name]  # type: ignore[index]
+        for m in members:
+            cm = self.metrics[m]
+            values[m] = (
+                self._finish(cm, np.float64(circ.seed)) if cm.kind == "formula" else cm.constant
+            )
+        residual = np.inf
+        iterations = 0
+        try:
+            for iterations in range(1, circ.max_iter + 1):  # noqa: B007
+                residual = 0.0
+                for m in members:
+                    cm = self.metrics[m]
+                    old = values[m]
+                    new = self._finish(cm, cm.evaluator(values))
+                    if circ.damping < 1:
+                        new = old + circ.damping * (new - old)
+                    if np.isinf(np.asarray(new, dtype=float)).any():
+                        raise SolverError(f"'{m}' became infinite after {iterations} iterations")
+                    residual = max(residual, _max_change(new, old))
+                    values[m] = new
+                if residual <= circ.tol:
+                    break
+            else:
+                raise SolverError(
+                    f"did not converge in {circ.max_iter} iterations (largest change "
+                    f"{residual:.3g}, tolerance {circ.tol:g})"
+                )
+        except Exception as e:  # noqa: BLE001
+            message = (
+                f"circularity '{name}': {e}"
+                if isinstance(e, SolverError)
+                else (f"{type(e).__name__}: {e} (solving circularity '{name}')")
+            )
+            solver[name] = SolverStats(name, False, iterations, float(residual), message=message)
+            code = "not_converged" if isinstance(e, SolverError) else "calc_error"
+            self._group_failed(members, message, code, values, status, diagnostics)
+            return
+        solver[name] = SolverStats(name, True, iterations, float(residual))
+        for m in members:
+            status[m] = self._solved_status(m, name, iterations, values, status, diagnostics)
+
+    def _eval_recurrence(self, step: Step, values, status, diagnostics, solver) -> None:
+        """Step through periods; within each period, blocks go in same-period order.
 
         Each formula is evaluated over the whole series and only position ``t`` is kept.
         Formulas in a recurrence are causal (no reductions or next()), so position ``t``
-        only reads positions already filled.
+        only reads positions already filled. A declared circular block is iterated at each
+        period, starting from the previous period's solution.
         """
-        group = set(members)
-        broken = next((m for m in members if self.metrics[m].error is not None), None)
-        if broken is not None:
-            for m in members:
-                cm = self.metrics[m]
-                status[m] = (
-                    MetricStatus("error", cm.error.message)
-                    if cm.error is not None
-                    else MetricStatus(
-                        "blocked", f"in a recurrence with '{broken}', which has errors"
-                    )
-                )
+        members = step.members
+        if not self._ready(members, status):
             return
-        external = {d for m in members for d in self.metrics[m].refs if d not in group}
-        bad = self._failed_dep(external, status)
-        if bad is not None:
-            for m in members:
-                status[m] = MetricStatus("blocked", f"depends on '{bad}', which has errors")
-            return
-
         ax = self.axes[self.metrics[members[0]].shape]  # type: ignore[index]
         arrays = {m: np.full(len(ax), np.nan) for m in members}
-        for m in members:
+
+        def store(m: str) -> None:
             values[m] = pd.Series(arrays[m].copy(), index=ax.index, name=m)
+
+        def evaluate_at(m: str, t: int) -> float:
+            cm = self.metrics[m]
+            return float(self._broadcast(cm, cm.evaluator(values)).iloc[t])
+
+        for m in members:
+            cm = self.metrics[m]
+            if cm.history is not None:
+                arrays[m][ax.historical] = cm.history[ax.historical]
+            store(m)
+        stats = {
+            b.circularity: SolverStats(b.circularity, True, 0, 0.0, periods={})
+            for b in step.blocks
+            if b.circularity
+        }
+        t, m = 0, members[0]
         try:
             for t in range(len(ax)):
-                for m in members:
-                    cm = self.metrics[m]
-                    if cm.history is not None and ax.historical[t]:
-                        arrays[m][t] = cm.history[t]
+                for block in step.blocks:
+                    active = [x for x in block.members if self._computes_at(self.metrics[x], t, ax)]
+                    if block.circularity is None:
+                        for m in active:
+                            arrays[m][t] = evaluate_at(m, t)
+                            store(m)
+                        continue
+                    circ = self.model.circularities[block.circularity]
+                    for m in active:  # warm start from the previous period's solution
+                        last = arrays[m][t - 1] if t else np.nan
+                        arrays[m][t] = last if np.isfinite(last) else circ.seed
+                        store(m)
+                    residual = np.inf
+                    for iterations in range(1, circ.max_iter + 1):  # noqa: B007
+                        residual = 0.0
+                        for m in active:
+                            old = arrays[m][t]
+                            new = evaluate_at(m, t)
+                            if circ.damping < 1:
+                                new = old + circ.damping * (new - old)
+                            if np.isinf(new):
+                                raise SolverError(
+                                    f"'{m}' became infinite at {ax.name}={ax.index[t]}"
+                                )
+                            change = abs(new - old)
+                            if change > residual:
+                                residual = change
+                            arrays[m][t] = new
+                            store(m)
+                        if residual <= circ.tol:
+                            break
                     else:
-                        out = self._broadcast(cm, cm.evaluator(values))
-                        arrays[m][t] = float(out.iloc[t])
-                    values[m] = pd.Series(arrays[m].copy(), index=ax.index, name=m)
+                        raise SolverError(
+                            f"did not converge at {ax.name}={ax.index[t]} in {circ.max_iter} "
+                            f"iterations (largest change {residual:.3g}, tolerance {circ.tol:g})"
+                        )
+                    st = stats[block.circularity]
+                    st.periods[str(ax.index[t])] = iterations  # type: ignore[index]
+                    st.iterations = max(st.iterations, iterations)
+                    st.residual = max(st.residual, float(residual))
         except Exception as e:  # noqa: BLE001
-            message = f"{type(e).__name__}: {e} (at {ax.name}={ax.index[t]}, in '{m}')"
-            for name in members:
-                values.pop(name, None)
-                status[name] = MetricStatus("error", message)
-            diagnostics.append(Diagnostic("error", "calc_error", message, f"metric:{m}"))
+            if isinstance(e, SolverError):
+                name = next(b.circularity for b in step.blocks if m in b.members)
+                message, code = f"circularity '{name}': {e}", "not_converged"
+                solver[name] = SolverStats(name, False, 0, np.nan, message=message)
+            else:
+                message = f"{type(e).__name__}: {e} (at {ax.name}={ax.index[t]}, in '{m}')"
+                code = "calc_error"
+            self._group_failed(members, message, code, values, status, diagnostics)
             return
+        solver.update(stats)
+        owner = {x: b.circularity for b in step.blocks for x in b.members if b.circularity}
         for m in members:
-            status[m] = self._value_status(self.metrics[m], values[m], status, diagnostics)
+            if m in owner:
+                it = stats[owner[m]].iterations
+                status[m] = self._solved_status(m, owner[m], it, values, status, diagnostics)
+            else:
+                status[m] = self._value_status(self.metrics[m], values[m], status, diagnostics)
+
+    def _solved_status(self, m, name, iterations, values, status, diagnostics) -> MetricStatus:
+        result = self._value_status(self.metrics[m], values[m], status, diagnostics)
+        if result.state == "ok":
+            plural = "s" if iterations != 1 else ""
+            result.message = f"solved by circularity '{name}' in {iterations} iteration{plural}"
+        return result
 
     def _run_checks(self, values, status, diagnostics) -> dict[str, CheckResult]:
         results = {}
@@ -782,6 +953,8 @@ class Engine:
             failed = np.isnan(data) | (data == 0)
         else:
             failed = ~(np.abs(data) <= cc.definition.tolerance)
+        if isinstance(raw, pd.Series):
+            failed[: cc.start] = False  # periods before forecast-only metrics exist
         if not failed.any():
             return CheckResult(cc.name, "passed", severity)
         failing = [
@@ -798,3 +971,10 @@ class Engine:
             Diagnostic(severity, "check_failed", message, f"check:{cc.name}", {"failing": failing})
         )
         return CheckResult(cc.name, "failed", severity, message, failing)
+
+
+def _max_change(new: Any, old: Any) -> float:
+    """Largest absolute change, ignoring positions that are missing in both."""
+    diff = np.abs(np.asarray(new, dtype=float) - np.asarray(old, dtype=float))
+    diff = diff[~np.isnan(diff)]
+    return float(diff.max()) if diff.size else 0.0

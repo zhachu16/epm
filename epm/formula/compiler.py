@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import dataclasses
 import operator
 from collections.abc import Callable, Mapping
 from typing import Any
 
 import numpy as np
 
+from .analysis import scope_start
 from .builtins import BUILTINS
 from .env import FormulaEnv
 from .ir import Binary, Call, Node, Num, Ref, Unary
@@ -67,6 +69,13 @@ def compile_formula(node: Node, env: FormulaEnv) -> Evaluator:
 
 def _compile_call(call: Call, env: FormulaEnv) -> Evaluator:
     builtin = BUILTINS[call.func]
+    if builtin.start_param is not None and env.starts:
+        key = builtin.start_param
+        arg = call.varargs[int(key)] if key.isdigit() else call.args.get(key)
+        s = 0 if arg is None else scope_start(arg, lambda n: env.starts.get(n, 0))
+        if s:
+            # parsed calls are shared between metrics, so annotate a copy
+            call = dataclasses.replace(call, literals={**call.literals, "_start": s})
     arg_fns = {k: compile_formula(v, env) for k, v in call.args.items()}
     var_fns = [compile_formula(v, env) for v in call.varargs]
 

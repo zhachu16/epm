@@ -55,6 +55,16 @@ def _as_array(v: Any, index: pd.Index) -> np.ndarray:
     return np.full(len(index), float(v))
 
 
+def start(call: Call) -> int:
+    """First position of the argument that is in scope (0 unless it is forecast-only)."""
+    return call.literals.get("_start", 0)
+
+
+def _from_start(x: Any, call: Call) -> Any:
+    s = start(call)
+    return x.iloc[s:] if s and _is_series(x) else x
+
+
 def _literal_value(node: Node) -> Any:
     if isinstance(node, Str):
         return node.value
@@ -73,6 +83,13 @@ class Builtin:
     min_varargs: int = 1
     signature: str = ""
     doc: str = ""
+    # Parameters whose first in-scope position matters (see ``start``); the compiler records
+    # it as the ``_start`` literal of a per-metric copy of the call.
+    start_param: str | None = None
+
+    def reduces(self, call: Call) -> bool:
+        """True if the result is a scalar summarizing its arguments over the axis."""
+        return False
 
     # -- binding -------------------------------------------------------------------------
 
@@ -262,6 +279,11 @@ class MinMax(Builtin):
             f"the {name}imum over its axis."
         )
 
+    start_param = "0"
+
+    def reduces(self, call):
+        return len(call.varargs) == 1
+
     def offset(self, call, key):
         return FULL if len(call.varargs) == 1 else 0
 
@@ -272,7 +294,7 @@ class MinMax(Builtin):
 
     def evaluate(self, call, args, varargs, env):
         if len(varargs) == 1:
-            x = varargs[0]
+            x = _from_start(varargs[0], call)
             return np.float64(getattr(x, self._reduce)(skipna=False)) if _is_series(x) else x
         return functools.reduce(self._pairwise, varargs)
 
@@ -320,8 +342,10 @@ class Prev(Builtin):
     signature = "prev(x, lag=1, init=None)"
     doc = (
         "Value of x `lag` periods earlier. The first `lag` periods take `init` "
-        "(missing if omitted)."
+        "(missing if omitted). For a forecast-only x, the first periods are the first "
+        "forecast periods."
     )
+    start_param = "x"
 
     def evaluate(self, call, args, varargs, env):
         x, lag = args["x"], call.literals["lag"]
@@ -332,9 +356,12 @@ class Prev(Builtin):
         out = np.full(n, np.nan)
         if lag < n:
             out[lag:] = values[: n - lag]
+        s = start(call)
         if "init" in args:
-            k = min(lag, n)
-            out[:k] = _as_array(args["init"], x.index)[:k]
+            k = min(s + lag, n)
+            out[s:k] = _as_array(args["init"], x.index)[s:k]
+        elif s:
+            out[s : min(s + lag, n)] = np.nan
         return pd.Series(out, index=x.index)
 
 
@@ -371,11 +398,15 @@ class Cumulative(Builtin):
         self.signature = f"{name}(x)"
         self.doc = doc
 
+    start_param = "x"
+
     def evaluate(self, call, args, varargs, env):
         x = args["x"]
         if not _is_series(x):
             return x
-        return getattr(x.astype(float), self.name)()
+        s = start(call)
+        out = getattr(x.astype(float).iloc[s:], self.name)()
+        return out.reindex(x.index) if s else out
 
 
 # ---------------------------------------------------------------------------------------
@@ -391,11 +422,16 @@ class Reduce(Builtin):
         self.signature = f"{name}(x)"
         self.doc = doc
 
+    start_param = "x"
+
+    def reduces(self, call):
+        return True
+
     def shape(self, call, args, varargs, env):
         return SCALAR
 
     def evaluate(self, call, args, varargs, env):
-        x = args["x"]
+        x = _from_start(args["x"], call)
         return np.float64(self._fn(x.astype(float))) if _is_series(x) else x
 
 
@@ -404,6 +440,9 @@ class At(Builtin):
     params = (Param("x", temporal="full"), Param("period", kind="literal"))
     signature = "at(x, period)"
     doc = "Value of x at a given period, e.g. at(revenue, 2028)."
+
+    def reduces(self, call):
+        return True
 
     def shape(self, call, args, varargs, env):
         s = args.get("x", UNKNOWN)
@@ -434,13 +473,17 @@ class Npv(Builtin):
     params = (Param("rate", scalar_only=True), Param("cashflows", temporal="full"))
     signature = "npv(rate, cashflows)"
     doc = "Net present value; the first cash flow is at t=0 and is not discounted."
+    start_param = "cashflows"
+
+    def reduces(self, call):
+        return True
 
     def shape(self, call, args, varargs, env):
         super().shape(call, args, varargs, env)
         return SCALAR
 
     def evaluate(self, call, args, varargs, env):
-        cf = args["cashflows"]
+        cf = _from_start(args["cashflows"], call)
         if not _is_series(cf):
             return cf
         values = cf.to_numpy(dtype=float)
@@ -486,12 +529,16 @@ class Irr(Builtin):
     params = (Param("cashflows", temporal="full"),)
     signature = "irr(cashflows)"
     doc = "Internal rate of return of a cash-flow series (missing if it has no sign change)."
+    start_param = "cashflows"
+
+    def reduces(self, call):
+        return True
 
     def shape(self, call, args, varargs, env):
         return SCALAR
 
     def evaluate(self, call, args, varargs, env):
-        cf = args["cashflows"]
+        cf = _from_start(args["cashflows"], call)
         return np.float64(irr(cf.to_numpy(dtype=float))) if _is_series(cf) else np.float64(np.nan)
 
 
