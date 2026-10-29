@@ -82,6 +82,7 @@ def test_create_model_example_builds_a_clean_model():
         assert preview["ok"], (batch["label"], preview["errors"])
         assert projects.apply(project, batch["ops"], "commit", label=batch["label"])["committed"]
     assert projects.validate(project) == {"diagnostics": []}
+    assert projects.show(project, "settings")["definition"]["name"] == "Acme DCF"  # one name
     value = projects.run(project, outputs=["enterprise_value"])["values"]["enterprise_value"]
     assert round(value["value"]) == 259  # the figure the skill quotes
     assert len(projects.run_analysis(project, "wacc_growth")["sweep"]["rows"]) == 9

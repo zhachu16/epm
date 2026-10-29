@@ -36,10 +36,11 @@ from epm.package import Package, package_bytes, read_package, read_package_bytes
 from epm.server.session import run_cli, workspace_snapshot
 from epm.sources import SourceError
 
-from . import config
+from . import deployment
 from .store import BlobStore, MetaStore, OutputRecord, ProjectRecord, VersionRecord
 
 EXAMPLE_ID = "example-lbo"
+EXAMPLE_NAME = "Example: LBO"
 EXAMPLE_DIR = Path(__file__).resolve().parents[1] / "examples" / "lbo"
 EPM_TYPE = "application/zip"
 _ALPHABET = string.ascii_lowercase + string.digits
@@ -69,6 +70,25 @@ def slug(text: str) -> str:
 def archive_of(ws: Workspace) -> bytes:
     """The workspace as a ``.epm`` archive, without calculated values."""
     return package_bytes(Package(ws.model, ws.inputs, ws.functions), include_cache=False)
+
+
+def model_name(data: bytes) -> str:
+    """The model's own name (``settings.name``) inside an archive."""
+    return read_package_bytes(data).model.settings.name
+
+
+def named(data: bytes, name: str) -> bytes:
+    """The archive with the model's own name set to ``name``.
+
+    A project's name and its model's ``settings.name`` are kept equal: the project list and
+    the web app show the first, and an exported file carries the second.
+    """
+    pkg = read_package_bytes(data)
+    if pkg.model.settings.name == name:
+        return data
+    settings = pkg.model.settings.model_copy(update={"name": name})
+    model = pkg.model.model_copy(update={"settings": settings})
+    return package_bytes(Package(model, pkg.inputs, pkg.functions), include_cache=False)
 
 
 def _now() -> datetime:
@@ -229,6 +249,8 @@ class Projects:
         is_example: bool = False,
     ) -> ProjectRecord:
         project_id = project_id or new_id("p_")
+        name = name.strip() or "Untitled model"
+        data = named(data, name)
         key = f"projects/{project_id}/versions/{1:06d}-{secrets.token_hex(4)}.epm"
         self.blobs.put(key, data, EPM_TYPE)
         first = VersionRecord(
@@ -242,7 +264,7 @@ class Projects:
         )
         record = ProjectRecord(
             id=project_id,
-            name=name.strip() or "Untitled model",
+            name=name,
             description=description,
             is_example=is_example,
         )
@@ -300,23 +322,35 @@ class Projects:
         ).to_dict()
 
     def rename(
-        self, project_id: str, name: str | None = None, description: str | None = None
+        self,
+        project_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        source: str = "api",
     ) -> dict[str, Any]:
-        project = self._project(project_id)
-        self._writable(project)
-        fields: dict[str, Any] = {}
-        if name is not None:
-            if not name.strip():
-                raise EpmError("invalid_name", "a project needs a name")
-            fields["name"] = name.strip()
-        if description is not None:
-            fields["description"] = description
-        if not fields:
-            return project.to_dict()
-        return self.meta.update_project(project.id, **fields).to_dict()
+        """Change the name or description. A new name is also the model's own name
+        (``settings.name``), so renaming saves a new version."""
+        with self._lock(project_id):
+            project = self._project(project_id)
+            self._writable(project)
+            fields: dict[str, Any] = {}
+            if name is not None:
+                if not name.strip():
+                    raise EpmError("invalid_name", "a project needs a name")
+                fields["name"] = name.strip()
+            if description is not None:
+                fields["description"] = description
+            if not fields:
+                return project.to_dict()
+            if fields.get("name", project.name) != project.name:
+                data = self._blob(self._version(project).blob_key)
+                self._store_version(
+                    project, named(data, fields["name"]), f"rename to {fields['name']}", source
+                )
+            return self.meta.update_project(project.id, **fields).to_dict()
 
     def delete(self, project_id: str) -> dict[str, Any]:
-        """Hide the project. It can be restored for ``config.KEEP_DELETED_DAYS`` days."""
+        """Hide the project. It can be restored for ``deployment.KEEP_DELETED_DAYS`` days."""
         project = self._project(project_id)
         self._writable(project)
         return self.meta.update_project(project.id, deleted_at=_now()).to_dict()
@@ -461,19 +495,26 @@ class Projects:
                 if mode == "commit":
                     self._writable(project)
                     self._expect(project, expected_version)
+                before = ws.model.settings.name
                 result = ws.apply(batch, mode, outputs, allow_errors)
                 out = clean(result.to_dict())
                 out["version"] = version.number
                 if mode != "commit" or not result.committed:
                     return out
+                # a batch that renames the model renames the project; any other save brings
+                # a model whose name drifted (projects from before the two were kept equal)
+                # back to the project's name
+                after = ws.model.settings.name.strip()
+                rename = after if after and after != before and after != project.name else None
+                data = archive_of(ws) if rename else named(archive_of(ws), project.name)
                 try:
-                    saved = self._store_version(
-                        project, archive_of(ws), result.label or "", source, len(ops)
-                    )
+                    saved = self._store_version(project, data, result.label or "", source, len(ops))
                 except EpmError as e:
                     if e.code == "version_conflict" and expected_version is None and not attempt:
                         continue
                     raise
+                if rename:
+                    self.meta.update_project(project.id, name=rename)
                 out["version"] = saved.number
                 return out
         raise AssertionError("unreachable")
@@ -674,13 +715,14 @@ class Projects:
             target = self._version(project, number)
             if number == project.current_version:
                 raise EpmError("invalid_argument", f"version {number} is already current")
+            data = self._blob(target.blob_key)
             saved = self._store_version(
-                project,
-                self._blob(target.blob_key),
-                label or f"restore version {number}",
-                source,
-                restored_from=number,
+                project, data, label or f"restore version {number}", source, restored_from=number
             )
+            # the model is back as it was, its name included
+            name = model_name(data).strip()
+            if name and name != project.name:
+                self.meta.update_project(project.id, name=name)
             return {"restored": number, "version": saved.to_dict()}
 
     def undo(
@@ -714,14 +756,15 @@ class Projects:
             return None
         pkg = read_package(self.example)
         ws = Workspace(pkg.model, pkg.inputs, pkg.functions)
-        data = archive_of(ws)
+        # named first, so the digest matches what is stored and an unchanged example stays put
+        data = named(archive_of(ws), EXAMPLE_NAME)
         digest = hashlib.sha256(data).hexdigest()
         with self._lock(EXAMPLE_ID):
             project = self.meta.get_project(EXAMPLE_ID)
             if project is None:
                 return self._new_project(
                     data,
-                    "Example: LBO",
+                    EXAMPLE_NAME,
                     "The sample leveraged buyout, read-only. Duplicate it to make changes.",
                     source="seed",
                     label="example",
@@ -746,7 +789,7 @@ class Projects:
         purged: list[str] = []
         for project in self.meta.list_projects(deleted=True, limit=10_000):
             if project.deleted_at and now - project.deleted_at > timedelta(
-                days=config.KEEP_DELETED_DAYS
+                days=deployment.KEEP_DELETED_DAYS
             ):
                 self._purge(project.id)
                 purged.append(project.id)
@@ -759,10 +802,10 @@ class Projects:
 
     def _prune(self, project: ProjectRecord, now: datetime) -> int:
         versions = self.meta.list_versions(project.id)  # newest first
-        keep = {v.number for v in versions[: config.KEEP_VERSIONS]}
+        keep = {v.number for v in versions[: deployment.KEEP_VERSIONS]}
         keep.add(project.current_version)
         daily: set[str] = set()
-        horizon = now - timedelta(days=config.KEEP_DAILY_DAYS)
+        horizon = now - timedelta(days=deployment.KEEP_DAILY_DAYS)
         for v in versions:
             if v.created_at and v.created_at >= horizon:
                 day = v.created_at.strftime("%Y-%m-%d")

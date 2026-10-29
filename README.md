@@ -46,7 +46,9 @@ Without the command at the end, the container starts the service on Supabase and
 
 1. Run [`service/schema.sql`](service/schema.sql) once in Supabase, create an R2 bucket and
    token, and fill in [`service/config.py`](service/config.py) **on this branch**. It is the
-   one file here that is yours to edit: updates from `main` keep it as it is.
+   one file here that is yours to edit: updates from `main` keep it as it is. It holds only
+   the credentials; the web app's address, CORS and retention are in
+   `service/deployment.py`, which comes from `main`.
 2. In Render, **New → Blueprint** on this repository and branch: `render.yaml` defines one
    Docker web service built from `service/Dockerfile`, health-checked at `/api/health`.
 3. Check the deployed service end to end:

@@ -729,6 +729,19 @@ points it at the service; `vercel.json` rewrites routes to `index.html`.
   the HTTP and MCP references. The web app's docs page shows both, with links between them
   rewritten to its own pages.
 
+### 12.13 Notes from the first MCP tests
+
+- **One name.** Projects had two names that drifted apart: the project's (the list, the web
+  app) and the model's `settings.name` (the local app, imports). They are now kept equal:
+  create, copy, import and rename write the project's name into the model (a rename saves a
+  version); a batch or restore that changes `settings.name` renames the project; and any
+  other save realigns a model whose name had drifted.
+- **Settings are readable.** `show settings` (in `fm`, HTTP and MCP) returns the model's
+  settings, unless an object is called `settings`.
+- **Non-secret settings moved** from `service/config.py`, which `web-backend` keeps for its
+  credentials, to `service/deployment.py`, which updates from `main`; `WEB_URL` there gives
+  MCP results their links to the web app.
+
 ## 13. Risks
 
 - **Recurrence speed.** Period stepping is slower than vectorized evaluation. Mitigated by

@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
-from . import config
+from . import config, deployment
 from .api import install_error_handlers, router
 from .projects import Projects
 from .store import BlobStore, MemoryBlobStore, MemoryMetaStore, MetaStore
@@ -58,7 +58,7 @@ def create_app(
     app.state.projects = projects
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=config.CORS_ORIGINS,
+        allow_origins=deployment.CORS_ORIGINS,
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["Content-Disposition"],
@@ -78,7 +78,7 @@ async def _maintain_forever(projects: Projects) -> None:
             log.info("maintenance: %s", summary)
         except Exception:  # noqa: BLE001 - try again next time
             log.exception("maintenance failed")
-        await asyncio.sleep(config.MAINTENANCE_INTERVAL)
+        await asyncio.sleep(deployment.MAINTENANCE_INTERVAL)
 
 
 def cloud_stores() -> tuple[MetaStore, BlobStore]:

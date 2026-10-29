@@ -367,7 +367,9 @@ def show(
     name: str,
     kind: Annotated[str | None, typer.Option(help="Object kind, if the name is ambiguous.")] = None,
 ) -> None:
-    """Show a definition, and for metrics its value, axis, unit, dependencies and status."""
+    """Show a definition, and for metrics its value, axis, unit, dependencies and status.
+
+    ``settings`` shows the model's settings, unless an object has that name."""
     state: State = ctx.obj
     ws = state.workspace()
     model = ws.model
@@ -431,6 +433,14 @@ def show(
         state.out.emit(
             {"kind": "function", "name": name, "signature": spec.signature, "code": spec.source},
             spec.source,
+        )
+        return
+    if kind in (None, "settings") and name == "settings":
+        # every field, defaults included, so a reader sees what an update would change
+        definition = model.settings.model_dump(mode="json")
+        state.out.emit(
+            {"kind": "settings", "name": "settings", "definition": definition},
+            f"settings\n{json.dumps(definition, indent=2)}",
         )
         return
     raise EpmError("not_found", f"nothing named '{name}'")
