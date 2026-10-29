@@ -333,7 +333,7 @@ history endpoints.
 
 | # | Deliverable | Done when |
 | --- | --- | --- |
-| M0 | Scaffold: package, pyproject, ruff, pytest, CI, Vite app | `pytest` and `npm run build` pass |
+| M0 | Python scaffold: package, pyproject, ruff, pytest, CI | `ruff` and `pytest` pass in CI |
 | M1 | Schemas, formula parser/compiler, graph, vectorized evaluator, `prev()` recurrences | Unit tests on a toy 3-statement model |
 | M2 | Sources (CSV/XLSX mapping), history and forecast periods, units and axis validation | Errors for bad references, axes and units |
 | M3 | Declared circular solver, with convergence reporting | Average-interest debt schedule converges; undeclared cycle rejected with path |
@@ -343,7 +343,7 @@ history endpoints.
 | M7 | run, sweep, analyses, checks, plus the full `fm` CLI with `--json` | Every listed command works end to end |
 | M8 | Sample LBO and golden tests | Matches the reference values |
 | M9 | FastAPI server as the session owner (undo, pending), CLI-to-server routing via lock file, websocket events, file watcher, terminal endpoint | API tests; a CLI edit while serving is undoable from the UI |
-| M10 | UI shell, explorer, graph view, inspector | Graph renders the LBO; click-through works |
+| M10 | Vite app scaffold, UI shell, explorer, graph view, inspector | `npm run build` passes; graph renders the LBO; click-through works |
 | M11 | Editors (metric, table, source, function, JSON), analyses UI, Changes panel | A full edit, review and commit loop in Playwright e2e |
 | M12 | Hardening: performance pass (sweeps of 1k scenarios), docs, agent guide | Agent guide (`docs/AGENTS.md`) and CLI reference published |
 

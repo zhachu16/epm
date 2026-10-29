@@ -1,0 +1,82 @@
+{
+  "settings": { "name": "Toy three-statement model", "currency": "USD", "default_axis": "fy" },
+  "axes": {
+    "fy": { "kind": "period", "values": [2025, 2026, 2027, 2028, 2029, 2030], "label": "Fiscal year" }
+  },
+  "metrics": {
+    "base_revenue":           { "value": 1000, "unit": "USD m", "folder": "Assumptions" },
+    "revenue_growth":         { "value": 0.06, "unit": "%", "folder": "Assumptions" },
+    "ebitda_margin":          { "value": 0.22, "unit": "%", "folder": "Assumptions" },
+    "da_pct_revenue":         { "value": 0.04, "unit": "%", "folder": "Assumptions" },
+    "capex_pct_revenue":      { "value": 0.05, "unit": "%", "folder": "Assumptions" },
+    "nwc_pct_revenue":        { "value": 0.10, "unit": "%", "folder": "Assumptions" },
+    "tax_rate":               { "value": 0.25, "unit": "%", "folder": "Assumptions" },
+    "interest_rate":          { "value": 0.07, "unit": "%", "folder": "Assumptions" },
+    "mandatory_amortization": { "value": 25, "unit": "USD m", "folder": "Assumptions" },
+    "min_cash":               { "value": 30, "unit": "USD m", "folder": "Assumptions" },
+    "opening_cash":           { "value": 50, "unit": "USD m", "folder": "Opening balance sheet" },
+    "opening_ppe":            { "value": 400, "unit": "USD m", "folder": "Opening balance sheet" },
+    "opening_nwc":            { "value": 100, "unit": "USD m", "folder": "Opening balance sheet" },
+    "opening_debt":           { "value": 350, "unit": "USD m", "folder": "Opening balance sheet" },
+    "opening_equity": {
+      "formula": "opening_cash + opening_ppe + opening_nwc - opening_debt",
+      "unit": "USD m", "folder": "Opening balance sheet"
+    },
+
+    "revenue":      { "axis": "fy", "unit": "USD m", "folder": "Income statement",
+                      "formula": "prev(revenue, init=base_revenue) * (1 + revenue_growth)" },
+    "ebitda":       { "formula": "revenue * ebitda_margin", "unit": "USD m", "folder": "Income statement" },
+    "depreciation": { "formula": "revenue * da_pct_revenue", "unit": "USD m", "folder": "Income statement" },
+    "ebit":         { "formula": "ebitda - depreciation", "unit": "USD m", "folder": "Income statement" },
+    "interest":     { "formula": "interest_rate * opening_debt_balance", "unit": "USD m", "folder": "Income statement" },
+    "ebt":          { "formula": "ebit - interest", "unit": "USD m", "folder": "Income statement" },
+    "taxes":        { "formula": "max(ebt, 0) * tax_rate", "unit": "USD m", "folder": "Income statement" },
+    "net_income":   { "formula": "ebt - taxes", "unit": "USD m", "folder": "Income statement" },
+
+    "capex":          { "formula": "revenue * capex_pct_revenue", "unit": "USD m", "folder": "Cash flow" },
+    "nwc":            { "formula": "revenue * nwc_pct_revenue", "unit": "USD m", "folder": "Balance sheet" },
+    "change_in_nwc":  { "formula": "nwc - prev(nwc, init=opening_nwc)", "unit": "USD m", "folder": "Cash flow" },
+    "cfo":            { "formula": "net_income + depreciation - change_in_nwc", "unit": "USD m", "folder": "Cash flow" },
+    "fcf_pre_debt":   { "formula": "cfo - capex", "unit": "USD m", "folder": "Cash flow" },
+
+    "opening_debt_balance": { "formula": "prev(debt, init=opening_debt)", "unit": "USD m", "folder": "Debt" },
+    "mandatory_repayment":  { "formula": "min(mandatory_amortization, opening_debt_balance)", "unit": "USD m", "folder": "Debt" },
+    "cash_available_for_sweep": {
+      "formula": "prev(cash, init=opening_cash) + fcf_pre_debt - mandatory_repayment - min_cash",
+      "unit": "USD m", "folder": "Debt"
+    },
+    "sweep": {
+      "formula": "clip(min(cash_available_for_sweep, opening_debt_balance - mandatory_repayment), lower=0)",
+      "unit": "USD m", "folder": "Debt"
+    },
+    "debt": { "formula": "opening_debt_balance - mandatory_repayment - sweep", "unit": "USD m", "folder": "Debt" },
+
+    "cash":   { "formula": "prev(cash, init=opening_cash) + fcf_pre_debt - mandatory_repayment - sweep",
+                "unit": "USD m", "folder": "Balance sheet" },
+    "ppe":    { "formula": "prev(ppe, init=opening_ppe) + capex - depreciation", "unit": "USD m", "folder": "Balance sheet" },
+    "equity": { "formula": "prev(equity, init=opening_equity) + net_income", "unit": "USD m", "folder": "Balance sheet" },
+    "total_assets": { "formula": "cash + ppe + nwc", "unit": "USD m", "folder": "Balance sheet" },
+    "total_liabilities_and_equity": { "formula": "debt + equity", "unit": "USD m", "folder": "Balance sheet" },
+
+    "cumulative_fcf": { "formula": "total(fcf_pre_debt)", "unit": "USD m", "folder": "Summary" },
+    "exit_debt":      { "formula": "last(debt)", "unit": "USD m", "folder": "Summary" }
+  },
+  "tables": {
+    "income_statement": {
+      "axis": "fy",
+      "rows": [
+        { "metric": "revenue" },
+        { "metric": "ebitda", "style": "subtotal" },
+        { "metric": "depreciation" },
+        { "metric": "ebit", "style": "subtotal" },
+        { "metric": "interest" },
+        { "metric": "taxes" },
+        { "metric": "net_income", "style": "total" }
+      ]
+    }
+  },
+  "checks": {
+    "balance_sheet_balances": { "expr": "total_assets - total_liabilities_and_equity", "tolerance": 1e-6 },
+    "cash_above_minimum":     { "expr": "cash >= min_cash - 1e-9", "severity": "warning" }
+  }
+}
