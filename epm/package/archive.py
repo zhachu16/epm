@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 import tempfile
 import zipfile
@@ -70,17 +71,25 @@ def read_package(path: str | Path) -> Package:
         return _route(files)
     if not path.exists():
         raise EpmError("missing_file", f"'{path}' does not exist")
+    return _route(_unzip(path, f"'{path}'"))
+
+
+def read_package_bytes(data: bytes) -> Package:
+    """Read a ``.epm`` archive held in memory."""
+    return _route(_unzip(io.BytesIO(data), "the data"))
+
+
+def _unzip(source, what: str) -> dict[str, bytes]:
     try:
-        with zipfile.ZipFile(path) as zf:
+        with zipfile.ZipFile(source) as zf:
             infos = [i for i in zf.infolist() if not i.is_dir()]
             if len(infos) > MAX_ENTRIES:
                 raise EpmError("unsafe_archive", f"archive has more than {MAX_ENTRIES} entries")
             if sum(i.file_size for i in infos) > MAX_TOTAL_BYTES:
                 raise EpmError("unsafe_archive", "archive is larger than 2 GiB uncompressed")
-            files = {_safe_name(i.filename): zf.read(i) for i in infos}
+            return {_safe_name(i.filename): zf.read(i) for i in infos}
     except zipfile.BadZipFile:
-        raise EpmError("invalid_package", f"'{path}' is not a ZIP archive") from None
-    return _route(files)
+        raise EpmError("invalid_package", f"{what} is not a ZIP archive") from None
 
 
 def package_files(pkg: Package, include_cache: bool = True) -> dict[str, bytes]:
@@ -107,18 +116,30 @@ def write_package(pkg: Package, path: str | Path, include_cache: bool = True) ->
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as fh:
-            with zipfile.ZipFile(fh, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                for name, data in files.items():
-                    info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-                    info.compress_type = zipfile.ZIP_DEFLATED
-                    info.external_attr = 0o644 << 16
-                    zf.writestr(info, data)
+            _zip(files, fh)
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+def package_bytes(pkg: Package, include_cache: bool = True) -> bytes:
+    """The ``.epm`` archive as bytes, identical to what :func:`write_package` writes."""
+    buffer = io.BytesIO()
+    _zip(package_files(pkg, include_cache), buffer)
+    return buffer.getvalue()
+
+
+def _zip(files: dict[str, bytes], fh) -> None:
+    # fixed timestamps and modes keep archives deterministic
+    with zipfile.ZipFile(fh, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for name, data in files.items():
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            zf.writestr(info, data)
 
 
 def _write_dir(files: dict[str, bytes], root: Path) -> None:

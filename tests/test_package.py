@@ -7,7 +7,7 @@ import pytest
 
 from epm import EpmError, Workspace, load_model
 from epm.engine.cache import ValueCache
-from epm.package import pack, read_package, unpack
+from epm.package import Package, pack, package_bytes, read_package, read_package_bytes, unpack
 
 FIXTURE = Path(__file__).parent / "fixtures" / "three_statement.json"
 
@@ -147,6 +147,17 @@ def test_directory_layout_pack_and_unpack(ws, tmp_path):
     assert Workspace.open(tmp_path / "packed.epm").inputs == {}
     with pytest.raises(EpmError, match="not empty"):
         unpack(archive, tmp_path / "dir")
+
+
+def test_archives_in_memory_match_files(ws, tmp_path):
+    ws.set_input("inputs/x.csv", b"1")
+    on_disk = ws.save(tmp_path / "m.epm", include_cache=False).read_bytes()
+    data = package_bytes(Package(ws.model, ws.inputs, ws.functions), include_cache=False)
+    assert data == on_disk
+    pkg = read_package_bytes(data)
+    assert pkg.model == ws.model and pkg.inputs == {"inputs/x.csv": b"1"}
+    with pytest.raises(EpmError, match="not a ZIP"):
+        read_package_bytes(b"hello")
 
 
 def test_bad_archives(tmp_path):

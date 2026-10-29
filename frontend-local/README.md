@@ -5,7 +5,7 @@ every kind of model object, analyses with charts, and a bottom panel for change 
 problems, an `fm` terminal and logs.
 
 It's a standalone Vite + React + TypeScript app. `fm serve` serves the built files from
-`frontend/dist`; set `EPM_FRONTEND` or pass `--frontend` to serve them from elsewhere.
+`frontend-local/dist`; set `EPM_FRONTEND` or pass `--frontend` to serve them from elsewhere.
 
 ```bash
 npm ci

@@ -10,9 +10,9 @@ from pathlib import Path
 from ..errors import EpmError
 from .app import create_app, find_frontend
 from .lockfile import base_url, live_session, lock_path, remove_lock, write_lock
-from .session import Session
+from .session import Session, workspace_snapshot
 
-__all__ = ["Session", "create_app", "find_frontend", "serve"]
+__all__ = ["Session", "create_app", "find_frontend", "serve", "workspace_snapshot"]
 
 
 def serve(
@@ -50,7 +50,7 @@ def serve(
     url = base_url({"host": host, "port": port})
     announce(f"serving {path.name} at {url}")
     if find_frontend(frontend) is None:
-        announce("the web UI is not built: run `npm ci && npm run build` in frontend/")
+        announce("the web UI is not built: run `npm ci && npm run build` in frontend-local/")
     announce(f"fm commands for this model now run in this session (lock: {lock_path(path).name})")
     if open_browser:
         webbrowser.open(url + "/")

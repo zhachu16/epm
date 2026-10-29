@@ -56,10 +56,10 @@ Add `--json` to any command for a `{ok, data, errors, warnings}` envelope.
 
 ## Web UI
 
-The UI lives in [`frontend/`](frontend), a standalone Vite + React app. Build it once:
+The local UI lives in [`frontend-local/`](frontend-local), a standalone Vite + React app. Build it once:
 
 ```bash
-cd frontend && npm ci && npm run build
+cd frontend-local && npm ci && npm run build
 ```
 
 Then serve a model and open the printed URL:

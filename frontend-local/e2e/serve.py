@@ -21,6 +21,6 @@ shutil.copytree(ROOT / "examples" / "lbo", model, ignore=ignore)
 # uvicorn re-raises the SIGTERM that stopped it; exit normally then so the copy is removed.
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 try:
-    serve(model, port=port, frontend=ROOT / "frontend" / "dist")
+    serve(model, port=port, frontend=ROOT / "frontend-local" / "dist")
 finally:
     shutil.rmtree(scratch, ignore_errors=True)

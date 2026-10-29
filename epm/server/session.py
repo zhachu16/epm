@@ -184,78 +184,85 @@ class Session:
     def snapshot(self) -> dict[str, Any]:
         """Everything the UI needs: definitions, calculated values, status and history."""
         with self.lock:
-            ws = self.ws
-            engine = ws.engine
-            run = ws.run()
-            model = ws.model
-            owner = {m: name for name, c in model.circularities.items() for m in c.metrics}
-            group_of = _graph_groups(model)
-            metrics = {}
-            for name, cm in engine.metrics.items():
-                d = cm.definition
-                kind = (
-                    "value"
-                    if d.value is not None
-                    else "input"
-                    if d.input is not None
-                    else "formula+history"
-                    if d.history is not None
-                    else "formula"
-                )
-                metrics[name] = {
-                    "kind": kind,
-                    "axis": engine.shape(name),
-                    "unit": engine.unit(name),
-                    "scope": "forecast" if cm.start else "all",
-                    "folder": d.folder,
-                    "description": d.description,
-                    "formula": d.formula,
-                    "deps": cm.refs,  # name -> lag; null means the whole series
-                    "used_by": sorted(engine.graph.dependants.get(name, {})),
-                    "status": run.status[name].to_dict() if name in run.status else None,
-                    "value": value_to_dict(run.values[name]) if name in run.values else None,
-                    "fingerprint": engine.fingerprints.get(name),
-                    "circularity": owner.get(name),
-                    "group": group_of[name],
-                }
-            functions = [
-                {
-                    "name": n,
-                    "signature": s.signature,
-                    "returns": s.returns,
-                    "causal": s.causal,
-                    "source": s.source,
-                }
-                for n, s in engine.functions.items()
-            ]
-            payload = {
-                "version": ws.version,
-                "path": str(self.path),
-                "name": model.settings.name,
-                "model": model.model_dump(mode="json", exclude_defaults=True),
-                "functions_source": ws.functions or "",
-                "functions": functions,
-                "files": [{"name": p, "bytes": len(b)} for p, b in sorted(ws.inputs.items())],
-                "metrics": metrics,
-                "checks": {k: c.to_dict() for k, c in run.checks.items()},
-                "solver": {k: s.to_dict() for k, s in run.solver.items()},
-                "diagnostics": [d.to_dict() for d in run.diagnostics],
-                "history": [e.to_dict() for e in ws.history],
-                "redo": [e.to_dict() for e in ws.redo_stack],
-                "pending": [
-                    {
-                        "id": p.id,
-                        "label": p.preview.label,
-                        "at": p.at,
-                        "preview": p.preview.to_dict(),
-                    }
-                    for p in ws.pending.values()
-                ],
-                "builtins": [
-                    {"name": n, "signature": b.signature, "doc": b.doc} for n, b in BUILTINS.items()
-                ],
+            return workspace_snapshot(self.ws, str(self.path))
+
+
+def workspace_snapshot(ws: Workspace, path: str | None = None) -> dict[str, Any]:
+    """The UI's view of a workspace: definitions, calculated values, status and history.
+
+    Shared by ``fm serve`` and the cloud service, so both frontends read one shape.
+    """
+    engine = ws.engine
+    run = ws.run()
+    model = ws.model
+    owner = {m: name for name, c in model.circularities.items() for m in c.metrics}
+    group_of = _graph_groups(model)
+    metrics = {}
+    for name, cm in engine.metrics.items():
+        d = cm.definition
+        kind = (
+            "value"
+            if d.value is not None
+            else "input"
+            if d.input is not None
+            else "formula+history"
+            if d.history is not None
+            else "formula"
+        )
+        metrics[name] = {
+            "kind": kind,
+            "axis": engine.shape(name),
+            "unit": engine.unit(name),
+            "scope": "forecast" if cm.start else "all",
+            "folder": d.folder,
+            "description": d.description,
+            "formula": d.formula,
+            "deps": cm.refs,  # name -> lag; null means the whole series
+            "used_by": sorted(engine.graph.dependants.get(name, {})),
+            "status": run.status[name].to_dict() if name in run.status else None,
+            "value": value_to_dict(run.values[name]) if name in run.values else None,
+            "fingerprint": engine.fingerprints.get(name),
+            "circularity": owner.get(name),
+            "group": group_of[name],
+        }
+    functions = [
+        {
+            "name": n,
+            "signature": s.signature,
+            "returns": s.returns,
+            "causal": s.causal,
+            "source": s.source,
+        }
+        for n, s in engine.functions.items()
+    ]
+    payload = {
+        "version": ws.version,
+        "path": path,
+        "name": model.settings.name,
+        "model": model.model_dump(mode="json", exclude_defaults=True),
+        "functions_source": ws.functions or "",
+        "functions": functions,
+        "files": [{"name": p, "bytes": len(b)} for p, b in sorted(ws.inputs.items())],
+        "metrics": metrics,
+        "checks": {k: c.to_dict() for k, c in run.checks.items()},
+        "solver": {k: s.to_dict() for k, s in run.solver.items()},
+        "diagnostics": [d.to_dict() for d in run.diagnostics],
+        "history": [e.to_dict() for e in ws.history],
+        "redo": [e.to_dict() for e in ws.redo_stack],
+        "pending": [
+            {
+                "id": p.id,
+                "label": p.preview.label,
+                "at": p.at,
+                "preview": p.preview.to_dict(),
             }
-        return clean(payload)
+            for p in ws.pending.values()
+        ],
+        "builtins": [
+            {"name": n, "signature": b.signature, "doc": b.doc} for n, b in BUILTINS.items()
+        ],
+    }
+    return clean(payload)
 
 
 def _graph_groups(model) -> dict[str, str]:

@@ -73,13 +73,13 @@ def _host(value: str) -> str:
 
 
 def find_frontend(explicit: Path | None = None) -> Path | None:
-    """The built frontend: an explicit path, $EPM_FRONTEND, or frontend/dist in a checkout."""
+    """The built frontend: an explicit path, $EPM_FRONTEND, or frontend-local/dist in a checkout."""
     import os
 
     candidates = [explicit] if explicit else []
     if os.environ.get("EPM_FRONTEND"):
         candidates.append(Path(os.environ["EPM_FRONTEND"]))
-    candidates.append(Path(__file__).resolve().parents[2] / "frontend" / "dist")
+    candidates.append(Path(__file__).resolve().parents[2] / "frontend-local" / "dist")
     for c in candidates:
         if c is not None and (c / "index.html").is_file():
             return c
@@ -351,7 +351,7 @@ def create_app(
             return HTMLResponse(
                 "<!doctype html><title>epm</title><body style='font-family:sans-serif'>"
                 "<h1>epm session is running</h1><p>The web UI is not built. Run "
-                "<code>npm ci &amp;&amp; npm run build</code> in <code>frontend/</code>, "
+                "<code>npm ci &amp;&amp; npm run build</code> in <code>frontend-local/</code>, "
                 "then reload.</p>"
                 "<p>API docs: <a href='/api/docs'>/api/docs</a></p></body>"
             )

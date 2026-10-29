@@ -14,7 +14,9 @@ Notes for agents and people changing this repository. To *use* epm to build mode
 | `epm/functions/` | Custom functions: static discovery, and the sandboxed worker process. |
 | `epm/sources/`, `epm/package/`, `epm/analysis/` | CSV/XLSX mapping, `.epm` archives, sweeps and analyses. |
 | `epm/cli/`, `epm/server/` | `fm` (Typer) and `fm serve` (FastAPI); the CLI forwards to a running server. |
-| `frontend/` | The web UI, a standalone Vite + React app with its own `package.json`. |
+| `frontend-local/` | The local app's UI, served by `fm serve`. A standalone Vite + React app with its own `package.json`. |
+| `service/` | The cloud service: projects in Supabase and R2, an HTTP API and an MCP endpoint over `epm`. `service/service.py` runs it. |
+| `frontend-web/` | The cloud web app, hosted on Vercel. A standalone Vite + React app, separate from `frontend-local`. |
 | `examples/lbo/` | The sample LBO, checked by golden tests against an independent calculation. |
 | `benchmarks/run.py` | Timings for runs, edits and 1k-scenario sweeps. |
 
@@ -29,11 +31,11 @@ ruff check . && ruff format --check . && pytest -q
 ```
 
 ```bash
-cd frontend && npm ci && npm run typecheck && npm test && npm run build
+cd frontend-local && npm ci && npm run typecheck && npm test && npm run build
 ```
 
 ```bash
-cd frontend && EPM_PYTHON=$(which python) npm run e2e
+cd frontend-local && EPM_PYTHON=$(which python) npm run e2e
 ```
 
 CI runs all four. The end-to-end tests need the built UI and a Chromium for Playwright
@@ -58,6 +60,6 @@ CI runs all four. The end-to-end tests need the built UI and a Chromium for Play
   examples/lbo …` command and every Python example in `README.md` and the agent guide, and
   checks that every built-in and listed diagnostic code is documented. A new built-in needs a
   row in the guide's formula table.
-- **API shapes.** The frontend's types live in `frontend/src/api/types.ts`; keep them in
+- **API shapes.** The frontend's types live in `frontend-local/src/api/types.ts`; keep them in
   step with what `epm/server/app.py` returns.
 - **Style.** Ruff with a line length of 100. Comments explain why, not what.
