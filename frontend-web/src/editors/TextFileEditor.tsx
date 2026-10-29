@@ -4,7 +4,7 @@ import { useSubmitFunctions, useSubmitModel } from "../api/hooks";
 import type { AppState, ModelJson } from "../api/types";
 import { useStore } from "../store";
 import { CodeEditor } from "./CodeEditor";
-import { errorsOf, useDraft } from "./common";
+import { ActionBar, errorsOf, useDraft } from "./common";
 
 /** How long typing has to pause before the text is saved. */
 export const AUTOSAVE_DELAY = 2000;
@@ -65,15 +65,6 @@ export function TextFileEditor({ state, file }: { state: AppState; file: "model.
     <div className="full-editor">
       <div className="bar">
         <span className="mono">{file}</span>
-        <button className="btn small" disabled={!dirty || busy} onClick={() => submit("dry_run")} data-testid="preview">
-          Preview
-        </button>
-        <button className="btn small primary" disabled={!dirty || busy || readOnly} onClick={() => submit("commit")} data-testid="save">
-          Save
-        </button>
-        <button className="btn small" disabled={!dirty || busy} onClick={revert}>
-          Revert
-        </button>
         {!readOnly && (
           <label className="note" title="Save a new version after a pause in typing">
             <input type="checkbox" checked={autosave} onChange={(e) => setAutosave(e.target.checked)} data-testid="autosave" /> autosave
@@ -85,13 +76,7 @@ export function TextFileEditor({ state, file }: { state: AppState; file: "model.
             : "The whole file is replaced; formulas calling a removed function will fail validation."}
         </span>
       </div>
-      {errors.length > 0 && (
-        <div className="message error" style={{ margin: 8 }} data-testid="editor-errors">
-          {errors.map((e, i) => (
-            <div key={i}>{e}</div>
-          ))}
-        </div>
-      )}
+      <ActionBar dirty={dirty} onSubmit={submit} onRevert={revert} errors={errors} />
       <div className="body">
         <CodeEditor value={draft} language={file === "model.json" ? "json" : "python"} onChange={setDraft} testId={`file-${file}`} />
       </div>

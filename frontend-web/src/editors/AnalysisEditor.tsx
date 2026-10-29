@@ -313,21 +313,29 @@ export function AnalysisEditor({ state, name }: { state: AppState; name: string 
         </div>
       </div>
 
-      <ActionBar dirty={dirty || !definition} onSubmit={submit} onRevert={revert} errors={errors}>
-        <button className="btn" onClick={run} disabled={running || !form.inputs.length || !form.outputs.length} data-testid="run-analysis">
-          {running ? "Running…" : "Run"}
-        </button>
-        {definition && !dirty && !readOnly && (
-          <button className="btn" onClick={saveResults} disabled={saving} title="Run the saved analysis and keep its results and chart as outputs" data-testid="save-results">
-            {saving ? "Saving…" : "Save results"}
-          </button>
-        )}
-        {definition?.plot && !dirty && (
-          <a className="btn" href={api.plotUrl(name)} target="_blank" rel="noreferrer" data-testid="plot-png">
-            Chart PNG
-          </a>
-        )}
-      </ActionBar>
+      <ActionBar
+        dirty={dirty || !definition}
+        onSubmit={submit}
+        onRevert={revert}
+        errors={errors}
+        onRun={() => void run()}
+        running={running}
+        runDisabled={!form.inputs.length || !form.outputs.length}
+        extras={[
+          ...(definition && !dirty && !readOnly
+            ? [
+                {
+                  id: "save-results",
+                  label: saving ? "Saving…" : "Save results",
+                  title: "Run the saved analysis and keep its results and chart as outputs",
+                  disabled: saving,
+                  onClick: () => void saveResults(),
+                },
+              ]
+            : []),
+          ...(definition?.plot && !dirty ? [{ id: "plot-png", label: "Chart PNG", href: api.plotUrl(name) }] : []),
+        ]}
+      />
 
       {result && (
         <div className="card">
