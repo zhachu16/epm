@@ -38,7 +38,19 @@ cd frontend-local && npm ci && npm run typecheck && npm test && npm run build
 cd frontend-local && EPM_PYTHON=$(which python) npm run e2e
 ```
 
-CI runs all four. The end-to-end tests need the built UI and a Chromium for Playwright
+```bash
+pip install -r service/requirements.txt && pytest -q service/tests
+```
+
+```bash
+cd frontend-web && npm ci && npm run typecheck && npm test && npm run build
+```
+
+```bash
+cd frontend-web && EPM_PYTHON=$(which python) npm run e2e
+```
+
+CI runs all of these. The end-to-end tests need the built UI and a Chromium for Playwright
 (`npx playwright install chromium`).
 
 ## Conventions
@@ -60,6 +72,10 @@ CI runs all four. The end-to-end tests need the built UI and a Chromium for Play
   examples/lbo …` command and every Python example in `README.md` and the agent guide, and
   checks that every built-in and listed diagnostic code is documented. A new built-in needs a
   row in the guide's formula table.
-- **API shapes.** The frontend's types live in `frontend-local/src/api/types.ts`; keep them in
-  step with what `epm/server/app.py` returns.
+- **API shapes.** The frontends' types live in `frontend-local/src/api/types.ts` and
+  `frontend-web/src/api/types.ts`; keep them in step with what `epm/server/app.py` and
+  `service/api.py` return. Both frontends read the snapshot from `workspace_snapshot()`.
+- **The service is stateless.** Each request loads a project version into a fresh
+  `Workspace`; a commit saves a new version. Keep per-request state out of `Projects`
+  except caches that are safe to lose (version archives, calculated values).
 - **Style.** Ruff with a line length of 100. Comments explain why, not what.

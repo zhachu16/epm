@@ -387,11 +387,11 @@ served by `fm serve` from `frontend-local/dist`. The cloud web app is a separate
 | M10 | Vite app scaffold, UI shell, explorer, graph view, inspector | done |
 | M11 | Editors (metric, table, source, function, JSON), analyses UI, Changes panel, terminal, Playwright end-to-end tests | done |
 | M12 | Hardening: performance pass (sweeps of 1k scenarios), docs, agent guide | done |
-| M13 | Repo split: `frontend/` → `frontend-local/`; the minimal epm changes for the cloud (12.2) | planned |
-| M14 | Service storage: store interfaces, Supabase and R2 implementations, in-memory fakes, `schema.sql`, versions, example seeding | planned |
-| M15 | Service layer and HTTP API: projects, batches, runs, files, outputs, versions, undo | planned |
-| M16 | MCP endpoint over the same service layer | planned |
-| M17 | `frontend-web`: projects page, project view, autosave status, versions, files and outputs, share links, example copy, docs page | planned |
+| M13 | Repo split: `frontend/` → `frontend-local/`; the minimal epm changes for the cloud (12.2) | done |
+| M14 | Service storage: store interfaces, Supabase and R2 implementations, in-memory fakes, `schema.sql`, versions, example seeding | done |
+| M15 | Service layer and HTTP API: projects, batches, runs, files, outputs, versions, undo | done |
+| M16 | MCP endpoint over the same service layer | done |
+| M17 | `frontend-web`: projects page, project view, autosave status, versions, files and outputs, share links, example copy, docs page | done |
 | M18 | Docs: user guide with HTTP and MCP usage and the onboarding example, all tested | planned |
 | M19 | Deployment: Dockerfile and Railway config, Vercel config, CI jobs, retention and backup job | planned |
 
@@ -501,7 +501,7 @@ Kept minimal:
 ```text
 service/
   service.py          entry point: builds the stores from config and the FastAPI app;
-                      `uvicorn service.service:app`
+                      `python -m service.service [--memory]`
   config.py           hard-coded Supabase URL and key, R2 account, keys and bucket (placeholders)
   projects.py         the service layer: projects, versions, batches, runs, files, outputs
   api.py              HTTP routes under /api
@@ -593,7 +593,7 @@ All under `/api`, JSON in and out, errors as `{code, message}`. CORS allows any 
 | Method and path | Purpose |
 | --- | --- |
 | `GET /projects?q=` · `POST /projects` | List and search; create (empty, or `{"from": "example-lbo"}`) |
-| `POST /projects/import` | Upload an `.epm` (multipart) as a new project |
+| `POST /projects/import?name=` | Upload an `.epm` (the request body) as a new project |
 | `GET /projects/{id}` · `PATCH /projects/{id}` · `DELETE /projects/{id}` | Metadata; rename; delete |
 | `POST /projects/{id}/duplicate` · `POST /projects/{id}/restore` | Copy; undelete |
 | `GET /projects/{id}/export?version=` | Download the `.epm` |
@@ -668,7 +668,7 @@ points it at the service; `vercel.json` rewrites routes to `index.html`.
 ### 12.10 Deployment and CI
 
 - **Railway.** `service/Dockerfile` installs epm from the repo root and
-  `service/requirements.txt`, and runs `uvicorn service.service:app --host 0.0.0.0 --port
+  `service/requirements.txt`, and runs `python -m service.service --host 0.0.0.0 --port
   $PORT`. `railway.toml` at the root points to it. The retention and backup job runs daily
   inside the service.
 - **Supabase.** Apply `service/schema.sql` once.
@@ -677,6 +677,34 @@ points it at the service; `vercel.json` rewrites routes to `index.html`.
 - **CI.** The existing jobs, with `frontend` renamed to `frontend-local`, plus a `service`
   job (ruff and `pytest service/tests`) and a `frontend-web` job (typecheck, unit tests,
   build, and Playwright end-to-end tests against the service on in-memory stores).
+
+### 12.11 Notes from building M13–M17
+
+- **epm changes.** Besides `workspace_snapshot` and the in-memory archive helpers, the
+  in-process `fm` runner moved out of `Session` into `run_cli(ws, argv)`, so the service
+  answers `show`, `list`, `validate` and `table show` with exactly the CLI's JSON.
+- **Running.** `python -m service.service` (Supabase and R2 from `config.py`) or
+  `--memory`. It refuses to start while `config.py` still has placeholders.
+- **Uploads are raw bodies**, not multipart: `POST /api/projects/import?name=` with the
+  `.epm` bytes, and `PUT /api/projects/{id}/files/{path}` with the file. A file upload is a
+  `file` op, so it is validated and versioned like any other edit. Uploads are capped at
+  50 MB.
+- **Extra read routes** mirror the MCP tools: `GET .../objects?kind=`, `.../show/{name}`,
+  `.../validate`, `.../tables/{name}`, and `GET /api/builtins`.
+- **MCP** runs stateless with JSON responses on the app's own `/mcp` route (no mount, so no
+  redirect to `/mcp/`). `apply_batch` defaults to `dry_run`; tool errors start with the epm
+  code (`read_only_project: ...`). Tools beyond the plan: `undelete_project`, `show_table`,
+  `list_builtins`.
+- **Undo walks back.** A restore records `restored_from`; `undo` treats a restore as the
+  version it restored, so undoing twice goes back two changes instead of undoing the undo.
+- **Concurrency.** Requests for one project are serialised in-process, and `commit_version`
+  guards across replicas. Writes without `expected_version` retry once on a conflict.
+- **Web app.** Routes are `/`, `/p/{id}[?version=N]` and `/docs[/{guide}]`, with a small
+  router instead of a routing library. It polls the project every 5 s and loads versions
+  saved elsewhere, unless an editor has unsaved edits, in which case it offers to. A commit
+  that loses a race shows "changed elsewhere" in the editor and the top bar. The Changes
+  panel only shows previews; Versions, Files and Outputs panels replace history, proposals
+  and the terminal. The docs page bundles `docs/user-guide.md` and `docs/agent-guide.md`.
 
 ## 13. Risks
 
