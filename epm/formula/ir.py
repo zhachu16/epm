@@ -68,6 +68,16 @@ class Call(Node):
     col: int | None = None
 
 
+@dataclass
+class FnCall(Node):
+    """A call to a custom function from functions.py."""
+
+    func: str
+    args: list[Node] = field(default_factory=list)
+    kwargs: dict[str, Node] = field(default_factory=dict)
+    col: int | None = None
+
+
 def walk(node: Node):
     """Yield ``node`` and all of its descendants."""
     yield node
@@ -80,4 +90,7 @@ def walk(node: Node):
         for child in node.args.values():
             yield from walk(child)
         for child in node.varargs:
+            yield from walk(child)
+    elif isinstance(node, FnCall):
+        for child in [*node.args, *node.kwargs.values()]:
             yield from walk(child)

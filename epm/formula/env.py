@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -38,6 +39,8 @@ class FormulaEnv:
     default_axis: str | None = None
     # first in-scope position of each forecast-only metric; absent means 0 (all periods)
     starts: Mapping[str, int] = field(default_factory=dict)
+    functions: Mapping[str, Any] = field(default_factory=dict)  # name → FunctionSpec
+    runtime: Any = None  # FunctionRuntime that executes custom functions
 
     def resolve_axis(self, name: str | None, func: str, col: int | None = None) -> AxisInfo:
         chosen = name or self.metric_axis or self.default_axis

@@ -12,6 +12,7 @@ import pandas as pd
 from ..engine import Engine
 from ..engine.cache import ValueCache
 from ..engine.results import value_to_dict
+from ..functions import discover
 from .apply import COLLECTIONS, State
 from .schema import Op
 
@@ -108,7 +109,31 @@ def diff_states(old: State, new: State, renames: dict[tuple[str, str], str]) -> 
                 Change("file", path, "changed", _file_summary(a_data), _file_summary(b_data))
             )
     if (old.functions or "") != (new.functions or ""):
-        changes.append(Change("function", "functions.py", "changed"))
+        a_fns, _ = discover(old.functions)
+        b_fns, _ = discover(new.functions)
+        renamed_fns = set()
+        for name, spec in b_fns.items():
+            origin = renames.get(("function", name))
+            if origin is not None and origin in a_fns:
+                renamed_fns.add(origin)
+                changes.append(Change("function", name, "renamed", renamed_from=origin))
+            elif name not in a_fns:
+                changes.append(Change("function", name, "added", after={"code": spec.source}))
+            elif a_fns[name].source != spec.source:
+                changes.append(
+                    Change(
+                        "function",
+                        name,
+                        "changed",
+                        {"code": a_fns[name].source},
+                        {"code": spec.source},
+                    )
+                )
+        for name, spec in a_fns.items():
+            if name not in b_fns and name not in renamed_fns:
+                changes.append(Change("function", name, "removed", before={"code": spec.source}))
+        if not any(c.kind == "function" for c in changes):
+            changes.append(Change("function", "functions.py", "changed"))
     return changes
 
 

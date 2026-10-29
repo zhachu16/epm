@@ -38,12 +38,14 @@ from ..formula import (
     parse_formula,
     references,
 )
-from ..formula.analysis import scope_start
+from ..formula.analysis import custom_calls, scope_start
+from ..formula.builtins import BUILTINS
 from ..formula.compiler import Evaluator
 from ..formula.ir import Node
 from ..formula.shapes import Shape, describe, join
 from ..formula.units import ANY, CONFLICT, Unit, UnitIssue, infer_unit, unit_key
 from ..formula.units import join as join_units
+from ..functions import FunctionRuntime, FunctionSpec, discover
 from ..model.schema import Binding, Check, Metric, Model
 from ..sources import DirectoryFiles, FileProvider, SourceError, SourceLoader
 from .cache import StepEntry, ValueCache
@@ -100,16 +102,26 @@ class Engine:
         model: Model,
         files: FileProvider | str | Path | None = None,
         *,
+        functions: str | None = None,
+        runtime: FunctionRuntime | None = None,
         sources: SourceLoader | None = None,
     ):
         """``files`` provides input files: a directory path or any :class:`FileProvider`.
 
-        ``sources`` lets an engine derived from another reuse its already-read files.
+        ``functions`` is the source of functions.py; its functions run in ``runtime`` (by
+        default a new isolated worker). ``sources`` lets an engine derived from another
+        reuse its already-read files.
         """
         self.model = model
         self.files = DirectoryFiles(files) if isinstance(files, str | Path) else files
         self.sources = sources or SourceLoader(model.sources, self.files)
         self.diagnostics: list[Diagnostic] = []
+        self.functions_source = functions
+        self.functions = self._discover_functions(functions)
+        self.runtime = runtime
+        if self.runtime is None and self.functions:
+            self.runtime = FunctionRuntime(functions)  # type: ignore[arg-type]
+        self._causal = frozenset(n for n, f in self.functions.items() if f.causal)
         self.starts: dict[str, int] = {}  # filled by scope inference, read by compiled formulas
         self.axes = self._build_axes()
         self._source_errors = self._validate_sources()
@@ -181,7 +193,32 @@ class Engine:
         return m.axis or source_axis or self.default_axis
 
     def _env(self, metric_axis: str | None) -> FormulaEnv:
-        return FormulaEnv(self.axes, metric_axis, self.default_axis, self.starts)
+        return FormulaEnv(
+            self.axes, metric_axis, self.default_axis, self.starts, self.functions, self.runtime
+        )
+
+    def _discover_functions(self, source: str | None) -> dict[str, FunctionSpec]:
+        specs, errors = discover(source)
+        for e in errors:
+            obj = f"function:{e.name}" if e.name else "functions"
+            detail = {"line": e.lineno} if e.lineno else {}
+            self._error(obj, "function_error", e.message, **detail)
+        for name in list(specs):
+            if name in BUILTINS:
+                self._error(
+                    f"function:{name}",
+                    "function_error",
+                    f"'{name}' is a built-in function; choose another name",
+                )
+                del specs[name]
+            elif name in self.model.metrics:
+                self._error(
+                    f"function:{name}",
+                    "function_error",
+                    f"'{name}' is also a metric; functions and metrics need different names",
+                )
+                del specs[name]
+        return specs
 
     def _unknown_refs(self, obj: str, refs: Iterable[str]) -> list[str]:
         unknown = [r for r in refs if r not in self.model.metrics]
@@ -248,11 +285,11 @@ class Engine:
 
         cm.shape = cm.declared_axis if cm.declared_axis is not None else UNKNOWN
         try:
-            cm.node = parse_formula(m.formula)  # type: ignore[arg-type]
+            cm.node = parse_formula(m.formula, frozenset(self.functions))  # type: ignore[arg-type]
         except FormulaError as e:
             self._fail(cm, e.code, e.message, **e.detail)
             return cm
-        cm.refs = references(cm.node)
+        cm.refs = references(cm.node, self._causal)
         unknown = self._unknown_refs(f"metric:{name}", cm.refs)
         if unknown:
             cm.error = self.diagnostics[-1]
@@ -524,6 +561,11 @@ class Engine:
             "default_axis": self.default_axis,
             "error": cm.error.message if cm.error else None,
             "sources": {b: self.sources.fingerprint(b) for b in bindings},
+            "functions": {
+                f: self.functions[f].hash
+                for f in sorted(custom_calls(cm.node) if cm.node is not None else ())
+                if f in self.functions
+            },
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
@@ -557,8 +599,8 @@ class Engine:
         cc = CompiledCheck(name, c)
         obj = f"check:{name}"
         try:
-            node = parse_formula(c.expr)
-            cc.refs = references(node)
+            node = parse_formula(c.expr, frozenset(self.functions))
+            cc.refs = references(node, self._causal)
             if self._unknown_refs(obj, cc.refs):
                 cc.error = self.diagnostics[-1]
                 return cc
@@ -645,7 +687,13 @@ class Engine:
                 }
             )
         model = self.model.model_copy(update={"metrics": metrics})
-        return Engine(model, self.files, sources=self.sources)
+        return Engine(
+            model,
+            self.files,
+            functions=self.functions_source,
+            runtime=self.runtime,
+            sources=self.sources,
+        )
 
     def run(
         self,

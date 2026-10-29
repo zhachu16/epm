@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .ir import Binary, Call, Node, Num, Ref, Unary
+from .ir import Binary, Call, FnCall, Node, Num, Ref, Unary
 
 
 class _Conflict:
@@ -109,4 +109,8 @@ def infer_unit(
         for u in chosen:
             out = join(out, u, issues, what=f"{node.func}() mixes", col=node.col)
         return out
+    if isinstance(node, FnCall):
+        for child in [*node.args, *node.kwargs.values()]:
+            infer_unit(child, unit_of, issues)
+        return ANY
     raise TypeError(f"unexpected node {node!r}")

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from ..errors import FormulaError
 from .builtins import BUILTINS, FULL
 from .env import FormulaEnv
-from .ir import Binary, Call, Node, Num, Ref, Unary
-from .shapes import SCALAR, Shape, join
+from .ir import Binary, Call, FnCall, Node, Num, Ref, Unary
+from .shapes import SCALAR, Shape, describe, join, join_all
 
 Lag = int | None  # None (FULL) means the whole series is needed
 
@@ -18,12 +19,13 @@ def _combine(a: Lag, b: Lag) -> Lag:
     return min(a, b)
 
 
-def references(node: Node) -> dict[str, Lag]:
+def references(node: Node, causal: frozenset[str] = frozenset()) -> dict[str, Lag]:
     """Map each referenced metric to the smallest lag at which it is read.
 
     ``prev(x)`` reads ``x`` at lag 1, ``prev(prev(x))`` at lag 2, and reductions such as
     ``total(x)`` need the whole series (:data:`FULL`). If a name is read in several ways,
-    ``FULL`` wins, otherwise the smallest lag does.
+    ``FULL`` wins, otherwise the smallest lag does. Custom functions read their arguments
+    in full unless listed in ``causal``.
     """
     refs: dict[str, Lag] = {}
 
@@ -41,9 +43,19 @@ def references(node: Node) -> dict[str, Lag]:
                 visit(child, _shift(offset, builtin.offset(n, key)))
             for i, child in enumerate(n.varargs):
                 visit(child, _shift(offset, builtin.offset(n, i)))
+        elif isinstance(n, FnCall):
+            delta = 0 if n.func in causal else FULL
+            for child in [*n.args, *n.kwargs.values()]:
+                visit(child, _shift(offset, delta))
 
     visit(node, 0)
     return refs
+
+
+def custom_calls(node: Node) -> set[str]:
+    from .ir import walk
+
+    return {n.func for n in walk(node) if isinstance(n, FnCall)}
 
 
 def _shift(offset: Lag, delta: Lag) -> Lag:
@@ -68,7 +80,67 @@ def infer_shape(node: Node, shape_of: Callable[[str], Shape], env: FormulaEnv) -
         args = {k: infer_shape(v, shape_of, env) for k, v in node.args.items()}
         varargs = [infer_shape(v, shape_of, env) for v in node.varargs]
         return BUILTINS[node.func].shape(node, args, varargs, env)
+    if isinstance(node, FnCall):
+        arg_shapes = [infer_shape(v, shape_of, env) for v in [*node.args, *node.kwargs.values()]]
+        return custom_shape(node, arg_shapes, env)
     raise TypeError(f"unexpected node {node!r}")
+
+
+def bind_custom(node: FnCall, spec) -> None:
+    """Check a custom call against the function's signature."""
+    if len(node.args) > spec.positional:
+        raise FormulaError(
+            "invalid_argument",
+            f"{spec.signature} takes at most {spec.positional} positional argument(s)",
+            col=node.col,
+        )
+    given = set(spec.params[: len(node.args)])
+    for k in node.kwargs:
+        if k not in spec.params:
+            raise FormulaError(
+                "invalid_argument", f"{spec.signature} has no parameter '{k}'", col=node.col
+            )
+        if k in given:
+            raise FormulaError(
+                "invalid_argument", f"{spec.name}() got '{k}' more than once", col=node.col
+            )
+        given.add(k)
+    missing = sorted(spec.required - given)
+    if missing:
+        raise FormulaError(
+            "invalid_argument",
+            f"{spec.signature} is missing {', '.join(missing)}",
+            col=node.col,
+        )
+
+
+def custom_axis(spec, arg_shapes: list[Shape], env: FormulaEnv, col=None) -> str:
+    if spec.axis is not None:
+        if spec.axis not in env.axes:
+            raise FormulaError("unknown_axis", f"{spec.name}() uses unknown axis '{spec.axis}'")
+        return spec.axis
+    joined = join_all(arg_shapes, col)
+    if isinstance(joined, str):
+        return joined
+    return env.resolve_axis(None, spec.name, col).name
+
+
+def custom_shape(node: FnCall, arg_shapes: list[Shape], env: FormulaEnv) -> Shape:
+    spec = env.functions.get(node.func)
+    if spec is None:
+        raise FormulaError("unknown_function", f"unknown function '{node.func}'", col=node.col)
+    bind_custom(node, spec)
+    if spec.returns == "scalar":
+        return SCALAR
+    axis = custom_axis(spec, arg_shapes, env, node.col)
+    for s in arg_shapes:
+        if isinstance(s, str) and s != axis:
+            raise FormulaError(
+                "axis_mismatch",
+                f"{spec.name}() returns a series on '{axis}' but got a {describe(s)}",
+                col=node.col,
+            )
+    return axis
 
 
 def scope_start(node: Node, start_of: Callable[[str], int]) -> int:
@@ -89,5 +161,8 @@ def scope_start(node: Node, start_of: Callable[[str], int]) -> int:
         if BUILTINS[node.func].reduces(node):
             return 0
         children = [*node.args.values(), *node.varargs]
+        return max((scope_start(c, start_of) for c in children), default=0)
+    if isinstance(node, FnCall):
+        children = [*node.args, *node.kwargs.values()]
         return max((scope_start(c, start_of) for c in children), default=0)
     raise TypeError(f"unexpected node {node!r}")

@@ -19,6 +19,8 @@ from .engine import Engine, RunResult
 from .engine.cache import ValueCache
 from .engine.engine import Override
 from .errors import Diagnostic, EpmError
+from .formula.analysis import custom_calls
+from .functions import FunctionRuntime, Limits
 from .model import Model, Settings
 from .ops import (
     Batch,
@@ -112,8 +114,11 @@ class Workspace:
         inputs: Mapping[str, bytes] | None = None,
         functions: str | None = None,
         path: str | Path | None = None,
+        limits: Limits | None = None,
     ):
         self.model = model or Model()
+        self.limits = limits or Limits()
+        self._runtimes: dict[str, FunctionRuntime] = {}  # functions.py source → worker
         self.inputs: dict[str, bytes] = dict(inputs or {})
         self.functions = functions
         self.path = Path(path) if path is not None else None
@@ -174,15 +179,36 @@ class Workspace:
             self.model = model
         if functions is not ...:
             self.functions = functions  # type: ignore[assignment]
+            self._prune_runtimes()
         self.invalidate()
 
     def invalidate(self) -> None:
         self._engine = None
 
+    def _runtime_for(self, functions: str | None) -> FunctionRuntime | None:
+        if not functions:
+            return None
+        if functions not in self._runtimes:
+            self._runtimes[functions] = FunctionRuntime(functions, self.limits)
+        return self._runtimes[functions]
+
+    def _prune_runtimes(self) -> None:
+        """Stop workers for versions of functions.py that are no longer current."""
+        for source in list(self._runtimes):
+            if source != self.functions:
+                self._runtimes.pop(source).close()
+
+    def close(self) -> None:
+        for runtime in self._runtimes.values():
+            runtime.close()
+        self._runtimes.clear()
+
     def _build_engine(
         self, model: Model, inputs: dict[str, bytes], functions: str | None
     ) -> Engine:
-        return Engine(model, MemoryFiles(inputs))
+        return Engine(
+            model, MemoryFiles(inputs), functions=functions, runtime=self._runtime_for(functions)
+        )
 
     @property
     def engine(self) -> Engine:
@@ -198,6 +224,7 @@ class Workspace:
         self.functions = state.functions
         self.inputs = dict(state.inputs)
         self._engine = engine
+        self._prune_runtimes()
 
     # -- editing -----------------------------------------------------------------------
 
@@ -238,6 +265,12 @@ class Workspace:
         if outputs is None:
             touched = [
                 c.name for c in result.changes if c.kind == "metric" and c.change != "removed"
+            ]
+            changed_functions = {c.name for c in result.changes if c.kind == "function"}
+            touched += [
+                n
+                for n, cm in new_engine.metrics.items()
+                if cm.node is not None and custom_calls(cm.node) & changed_functions
             ]
             outputs = [*self.model.settings.key_outputs, *new_model.settings.key_outputs, *touched]
         result.impact = impact(
