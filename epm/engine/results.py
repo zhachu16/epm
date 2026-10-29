@@ -100,6 +100,8 @@ class RunResult:
     checks: dict[str, CheckResult]
     diagnostics: list[Diagnostic]
     solver: dict[str, SolverStats] = field(default_factory=dict)
+    computed: list[str] = field(default_factory=list)  # metrics evaluated in this run
+    reused: list[str] = field(default_factory=list)  # metrics taken from the cache
 
     def __getitem__(self, name: str) -> Any:
         return self.values[name]

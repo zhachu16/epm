@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -37,6 +39,14 @@ class SourceLoader:
         self.files = files
         self._sheets: dict[tuple, dict[str, Sheet]] = {}
         self._tables: dict[str, SourceTable | SourceError] = {}
+        self.file_hashes: dict[str, str] = {}
+
+    def fingerprint(self, name: str) -> str:
+        """Hash of a source's mapping and its file contents (empty if it never loaded)."""
+        source = self.sources.get(name)
+        spec = source.model_dump(mode="json") if source is not None else None
+        file_hash = self.file_hashes.get(source.file, "") if source is not None else ""
+        return hashlib.sha256(json.dumps([spec, file_hash], sort_keys=True).encode()).hexdigest()
 
     def _read(self, source: Source) -> dict[str, Sheet]:
         fmt = source.resolved_format
@@ -53,6 +63,7 @@ class SourceLoader:
                 raise SourceError("missing_file", f"input file '{source.file}' not found") from None
             except (OSError, ValueError) as e:
                 raise SourceError("missing_file", f"cannot read '{source.file}': {e}") from None
+            self.file_hashes[source.file] = hashlib.sha256(data).hexdigest()
             if fmt == "csv":
                 self._sheets[key] = {source.file: read_csv(data, source.file, source.delimiter)}
             else:

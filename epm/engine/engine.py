@@ -17,6 +17,8 @@ formula. Units are inferred alongside shapes, and mixing them is reported.
 from __future__ import annotations
 
 import difflib
+import hashlib
+import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,11 +46,15 @@ from ..formula.units import ANY, CONFLICT, Unit, UnitIssue, infer_unit, unit_key
 from ..formula.units import join as join_units
 from ..model.schema import Binding, Check, Metric, Model
 from ..sources import DirectoryFiles, FileProvider, SourceError, SourceLoader
+from .cache import StepEntry, ValueCache
 from .graph import DependencyGraph, Lag
 from .planner import Step, plan
 from .results import CheckResult, MetricStatus, RunResult, SolverStats
 
 Override = float | int | Mapping[Any, float | None] | pd.Series
+
+# Bump when evaluation semantics change, so cached values from older versions are ignored.
+ENGINE_VERSION = "1"
 
 
 @dataclass
@@ -117,6 +123,8 @@ class Engine:
         self.graph = DependencyGraph({n: cm.refs for n, cm in self.metrics.items()})
         self._validate_circularities()
         self.steps = self._plan()
+        self.fingerprints: dict[str, str] = {}
+        self.step_keys = self._fingerprint_steps()
         self.checks = {name: self._prepare_check(name, c) for name, c in model.checks.items()}
         self._validate_tables()
 
@@ -500,6 +508,51 @@ class Engine:
                 )
         return steps
 
+    def _own_hash(self, cm: CompiledMetric) -> str:
+        definition = cm.definition.model_dump(
+            mode="json", include={"axis", "value", "input", "formula", "history", "scope"}
+        )
+        axis = self.model.axes.get(cm.shape) if isinstance(cm.shape, str) else None
+        bindings = [b.source for b in (cm.definition.input, cm.definition.history) if b]
+        payload = {
+            "definition": definition,
+            "shape": cm.shape if isinstance(cm.shape, str) else None,
+            "axis": axis.model_dump(mode="json", include={"values", "historical"})
+            if axis
+            else None,
+            "start": cm.start,
+            "default_axis": self.default_axis,
+            "error": cm.error.message if cm.error else None,
+            "sources": {b: self.sources.fingerprint(b) for b in bindings},
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+    def _fingerprint_steps(self) -> list[str]:
+        """Fingerprint every step from its definitions and the fingerprints it reads."""
+        keys = []
+        for step in self.steps:
+            members = set(step.members)
+            h = hashlib.sha256(f"{ENGINE_VERSION}|{step.kind}".encode())
+            for name in sorted({step.circularity, *(b.circularity for b in step.blocks)} - {None}):
+                circ = self.model.circularities[name]  # type: ignore[index]
+                h.update(
+                    json.dumps(
+                        circ.model_dump(mode="json", exclude={"folder", "description"}),
+                        sort_keys=True,
+                    ).encode()
+                )
+            for m in step.members:  # order matters for Gauss-Seidel iteration
+                h.update(f"|{m}={self._own_hash(self.metrics[m])}".encode())
+            external = sorted({d for m in members for d in self.metrics[m].refs} - members)
+            for d in external:
+                # a rejected loop's members read each other; they are errors either way
+                h.update(f"|<{d}={self.fingerprints.get(d, 'unresolved')}".encode())
+            key = h.hexdigest()
+            keys.append(key)
+            for m in step.members:
+                self.fingerprints[m] = hashlib.sha256(f"{key}|{m}".encode()).hexdigest()
+        return keys
+
     def _prepare_check(self, name: str, c: Check) -> CompiledCheck:
         cc = CompiledCheck(name, c)
         obj = f"check:{name}"
@@ -598,15 +651,17 @@ class Engine:
         overrides: Mapping[str, Override] | None = None,
         outputs: Iterable[str] | None = None,
         checks: bool | None = None,
+        cache: ValueCache | None = None,
     ) -> RunResult:
         """Evaluate the model.
 
         ``overrides`` temporarily replace metric definitions with values; the model itself
         is not changed. ``outputs`` limits evaluation to what those metrics need. Checks run
-        by default only on a full run.
+        by default only on a full run. Steps whose fingerprint is in ``cache`` are reused
+        instead of evaluated, and newly evaluated steps are added to it.
         """
         if overrides:
-            return self.with_overrides(overrides).run(outputs=outputs, checks=checks)
+            return self.with_overrides(overrides).run(outputs=outputs, checks=checks, cache=cache)
         selected = list(outputs) if outputs is not None else None
         for name in selected or ():
             self._require(name)
@@ -623,25 +678,50 @@ class Engine:
         status: dict[str, MetricStatus] = {}
         diagnostics: list[Diagnostic] = []
         solver: dict[str, SolverStats] = {}
+        computed: list[str] = []
+        reused: list[str] = []
         with np.errstate(all="ignore"):
-            for step in self.steps:
+            for step, key in zip(self.steps, self.step_keys, strict=True):
                 if needed is not None and needed.isdisjoint(step.members):
                     continue
+                entry = cache.get(key) if cache is not None else None
+                if entry is not None:
+                    values.update(entry.values)
+                    status.update(entry.status)
+                    diagnostics.extend(entry.diagnostics)
+                    solver.update(entry.solver)
+                    reused.extend(step.members)
+                    continue
+                first_diagnostic = len(diagnostics)
                 if step.kind == "single":
                     self._eval_single(step.members[0], values, status, diagnostics)
                 elif step.kind == "circular":
                     self._eval_circular(step, values, status, diagnostics, solver)
                 else:
                     self._eval_recurrence(step, values, status, diagnostics, solver)
+                computed.extend(step.members)
+                if cache is not None:
+                    names = {step.circularity, *(b.circularity for b in step.blocks)}
+                    cache.put(
+                        key,
+                        StepEntry(
+                            {m: values[m] for m in step.members if m in values},
+                            {m: status[m] for m in step.members},
+                            diagnostics[first_diagnostic:],
+                            {k: v for k, v in solver.items() if k in names},
+                        ),
+                    )
             check_results = self._run_checks(values, status, diagnostics) if run_checks else {}
 
         shown = selected if selected is not None else [n for n in self.metrics if n in status]
         return RunResult(
-            values={n: values[n] for n in shown if n in values},
+            values={n: _copy(values[n]) for n in shown if n in values},
             status={n: status[n] for n in shown},
             checks=check_results,
             diagnostics=[*self.diagnostics, *diagnostics],
             solver=solver,
+            computed=computed,
+            reused=reused,
         )
 
     @staticmethod
@@ -978,3 +1058,8 @@ def _max_change(new: Any, old: Any) -> float:
     diff = np.abs(np.asarray(new, dtype=float) - np.asarray(old, dtype=float))
     diff = diff[~np.isnan(diff)]
     return float(diff.max()) if diff.size else 0.0
+
+
+def _copy(value: Any) -> Any:
+    """Callers get their own Series, so editing a result cannot corrupt the cache."""
+    return value.copy() if isinstance(value, pd.Series) else value

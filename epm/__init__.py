@@ -3,6 +3,7 @@
 from .engine import Engine, RunResult
 from .errors import Diagnostic, EpmError, FormulaError
 from .model import Model, dump_model, load_model
+from .workspace import Workspace
 
 __all__ = [
     "Diagnostic",
@@ -11,6 +12,7 @@ __all__ = [
     "FormulaError",
     "Model",
     "RunResult",
+    "Workspace",
     "dump_model",
     "load_model",
 ]
