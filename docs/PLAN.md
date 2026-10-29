@@ -16,11 +16,15 @@ and a structured API that agents can drive.
 | Undo history | Session only. It lives in memory in the `fm serve` process and is never written to the archive. |
 | Debt tranches | Separate 1-D metrics per tranche (`tlb_close`, `notes_close`, `revolver_close`). Totals are explicit formulas. |
 | Stack | Python 3.12+, pandas, numpy, openpyxl, pyarrow, FastAPI, Typer, pydantic v2. Frontend: React, TypeScript, Vite, Monaco, React Flow + elkjs, ECharts, xterm.js, react-resizable-panels, TanStack Query. |
+| Cloud delivery | A `service/` folder next to `epm/`, deployed together on Railway as one long-running container. The web frontend is hosted on Vercel. See section 12. |
+| Cloud storage | Supabase Postgres for metadata (projects, versions, outputs); Cloudflare R2 for `.epm` archives, inputs and outputs. |
+| Cloud auth | None during the alpha. The app and both APIs are open; Supabase Auth comes later. No API tokens or shared secrets. |
+| Cloud concurrency | Stateless: each request loads the project's latest version, applies, and saves a new version. Every saved version can be restored. |
 
 ## Repository layout
 
 ```text
-epm/                    Python package
+epm/                    core Python package, shared by the local app and the cloud service
   model/                pydantic schemas for every object kind, and model.json I/O
   formula/              parser, whitelist, AST → dependency extraction, compiler
   engine/               graph, SCC/topological ordering, evaluator, solver, cache
@@ -29,12 +33,14 @@ epm/                    Python package
   ops/                  structured operations, batches, validation, history
   analysis/             run, sweep, analyses and checks
   package/              ZIP archive read/write and fingerprints
-  api.py                the shared Python API (Workspace class)
+  workspace.py          the shared Python API (Workspace class)
   cli/                  Typer app: `fm ...`, every command supports --json
-  server/               FastAPI routes, websocket events, file watcher
-web/                    React frontend
+  server/               `fm serve`: the local session server
+service/                the cloud service (HTTP + MCP) over epm; `service.py` runs it
+frontend-local/         the local app's UI, served by `fm serve` (standalone Vite package)
+frontend-web/           the cloud web app, hosted on Vercel (standalone Vite package)
 examples/lbo/           complete sample LBO model and its source files
-tests/                  pytest suites, golden values for the LBO
+tests/                  pytest suites for epm, golden values for the LBO
 docs/
 ```
 
@@ -311,8 +317,9 @@ diagnostics, history and pending in one snapshot), `GET /api/trace/{name}`,
 
 ## 9. Frontend
 
-A standalone Vite + React + TypeScript app in `frontend/`, served by `fm serve` from
-`frontend/dist`.
+A standalone Vite + React + TypeScript app in `frontend-local/` (formerly `frontend/`),
+served by `fm serve` from `frontend-local/dist`. The cloud web app is a separate package,
+`frontend-web/` (section 12.8).
 
 - **Left (explorer).** A searchable tree of folders → inputs, metrics, tables, functions,
   analyses, checks, sources, circularities, axes and files, with status badges, and a
@@ -380,8 +387,16 @@ A standalone Vite + React + TypeScript app in `frontend/`, served by `fm serve` 
 | M10 | Vite app scaffold, UI shell, explorer, graph view, inspector | done |
 | M11 | Editors (metric, table, source, function, JSON), analyses UI, Changes panel, terminal, Playwright end-to-end tests | done |
 | M12 | Hardening: performance pass (sweeps of 1k scenarios), docs, agent guide | done |
+| M13 | Repo split: `frontend/` → `frontend-local/`; the minimal epm changes for the cloud (12.2) | planned |
+| M14 | Service storage: store interfaces, Supabase and R2 implementations, in-memory fakes, `schema.sql`, versions, example seeding | planned |
+| M15 | Service layer and HTTP API: projects, batches, runs, files, outputs, versions, undo | planned |
+| M16 | MCP endpoint over the same service layer | planned |
+| M17 | `frontend-web`: projects page, project view, autosave status, versions, files and outputs, share links, example copy, docs page | planned |
+| M18 | Docs: user guide with HTTP and MCP usage and the onboarding example, all tested | planned |
+| M19 | Deployment: Dockerfile and Railway config, Vercel config, CI jobs, retention and backup job | planned |
 
-The backend (M0–M9) is usable headless by agents before any UI work starts.
+The backend (M0–M9) is usable headless by agents before any UI work starts. M13–M19 land
+on one branch and go out as one pull request.
 
 ### Notes from building M0–M8
 
@@ -444,7 +459,226 @@ Edits preview and commit in about 25 ms. A synthetic model of 10,000 metrics bui
 - **Docs are executable.** `tests/test_docs.py` runs every batch, command and Python
   example in the README and the [agent guide](agent-guide.md).
 
-## 12. Risks
+## 12. Cloud service (alpha)
+
+A hosted version of epm: a web app on Vercel, and a service on Railway that runs the epm
+engine behind an HTTP API and an MCP endpoint. Projects live in Supabase (metadata) and R2
+(files). The local app (`fm`, `fm serve`, `frontend-local`) keeps working as it does today.
+
+### 12.1 Principles
+
+- **epm is the core.** `service/` imports `epm` and reuses `Workspace` for inspection,
+  editing and evaluation. epm changes only where the cloud needs it (12.2).
+- **One service layer.** HTTP routes and MCP tools are thin wrappers over the same
+  functions in `service/projects.py`. All model edits still go through `Workspace.apply`
+  (op batches), including uploaded input files (`file` ops).
+- **Stateless requests.** A request loads the project's current version, does its work and,
+  if it changed the model, saves a new version. No session, no in-memory undo stack, no
+  pending proposals in the cloud. Undo is restoring an earlier version (12.5).
+- **Open alpha.** No authentication and no secrets. Every route takes an `Actor` from one
+  FastAPI dependency, `get_actor()`, which returns an anonymous actor for now; Supabase Auth
+  replaces it later without touching the routes.
+- **Hard-coded config.** Supabase and R2 credentials are placeholders in
+  `service/config.py`, filled in by hand for the MVP. Nothing reads them from the
+  environment.
+
+### 12.2 Changes to epm
+
+Kept minimal:
+
+- **Snapshot.** Move the body of `Session.snapshot` into a function,
+  `epm.server.session.workspace_snapshot(ws, path)`, that `Session.snapshot` calls. The
+  service returns the same shape, so `frontend-web` reuses the local UI's types and
+  editors.
+- **Archives in memory.** `read_package_bytes(data)` and `package_bytes(pkg,
+  include_cache)` next to `read_package` and `write_package`, so the service can move
+  `.epm` archives to and from R2 without temp files. Existing behaviour is unchanged.
+- **Frontend path.** `find_frontend` looks in `frontend-local/dist`; messages and docs that
+  name `frontend/` are updated.
+
+### 12.3 Layout
+
+```text
+service/
+  service.py          entry point: builds the stores from config and the FastAPI app;
+                      `uvicorn service.service:app`
+  config.py           hard-coded Supabase URL and key, R2 account, keys and bucket (placeholders)
+  projects.py         the service layer: projects, versions, batches, runs, files, outputs
+  api.py              HTTP routes under /api
+  tools.py            MCP tools, mounted at /mcp
+  actor.py            get_actor(): the auth seam, anonymous for now
+  store/
+    base.py           MetaStore and BlobStore interfaces
+    supabase.py       MetaStore on Supabase (supabase-py)
+    r2.py             BlobStore on R2 (boto3, S3 API)
+    memory.py         in-memory fakes for tests and local runs
+  schema.sql          Supabase tables and the commit_version function
+  requirements.txt    the service's dependencies on top of epm (supabase, boto3, mcp)
+  Dockerfile          builds epm and the service; build context is the repo root
+  tests/              pytest suites against the in-memory stores
+```
+
+`service.py` creates the app with real stores; `create_app(meta, blobs)` takes any store,
+so tests and a local `python -m service.service --memory` run use the in-memory fakes.
+
+### 12.4 Storage
+
+**Supabase (Postgres)**
+
+| Table | Columns |
+| --- | --- |
+| `projects` | `id` (text, e.g. `p_7f3k9q2m`), `name`, `description`, `is_example`, `current_version`, `created_at`, `updated_at`, `deleted_at` |
+| `versions` | `project_id`, `number`, `blob_key`, `label`, `source` (`create`, `ui`, `mcp`, `import`, `restore`), `ops`, `bytes`, `sha256`, `created_at`; unique `(project_id, number)` |
+| `outputs` | `id`, `project_id`, `version`, `kind` (`run`, `sweep`, `analysis`, `plot`), `name`, `blob_key`, `content_type`, `bytes`, `created_at` |
+
+- **Commits are atomic.** The archive is uploaded to R2 first under a new key, then the
+  Postgres function `commit_version(project_id, expected_version, ...)` inserts the version
+  row and moves `current_version` only if it still equals `expected_version`. Otherwise it
+  fails with `version_conflict` and the orphaned blob is removed.
+- **Search** matches `name` and `description` (case-insensitive), newest first, excluding
+  deleted projects.
+
+**R2**
+
+```text
+projects/{project_id}/versions/{number}.epm    every saved version (without cache/)
+projects/{project_id}/outputs/{output_id}.{csv,json,png}
+backups/meta/{date}.json                       daily export of the three tables
+```
+
+Version blobs are immutable, so the service keeps a small on-disk cache of them in the
+container. Calculated values are kept in an in-process `ValueCache` per project; it is safe
+across versions because step fingerprints key it, and losing it on a redeploy only costs
+time. Nothing authoritative lives on the container's disk.
+
+### 12.5 Service layer
+
+`service/projects.py`, used by both HTTP and MCP:
+
+| Area | Functions |
+| --- | --- |
+| Projects | `create(name, from_epm=None)`, `list(q=None)`, `get(id)`, `rename(id, name)`, `duplicate(id, name)`, `delete(id)`, `import_epm(bytes, name)`, `export_epm(id, version=None)` |
+| Model | `state(id)` (the UI snapshot), `show`, `trace`, `validate`, `list_objects(kind)` |
+| Edits | `apply(id, ops, mode="commit" \| "dry_run", expected_version=None, label=None, source=...)` |
+| Evaluation | `run(id, overrides, outputs)`, `sweep(id, inputs, outputs, mode)`, `run_analysis(id, name, plot=False)` |
+| Files | `list_files(id)`, `download_file(id, path)`; uploads and removals are `file` ops through `apply` |
+| Outputs | `save_output(...)`, `list_outputs(id)`, `download_output(id, output_id)` |
+| Versions | `list_versions(id)`, `restore(id, number)`, `undo(id)` |
+
+- **Project IDs.** Every project gets a unique `project_id` at creation. Every operation on
+  an existing project requires it; only create and list/search don't.
+- **Saving.** A committed batch, an import, a file upload or a restore writes a new version.
+  `dry_run` never writes. Validation errors block a commit, as locally.
+- **Conflicts.** With `expected_version`, a write fails with `version_conflict` if someone
+  saved in between; the web app always sends it. Without it (agents), the write applies to
+  the latest version and the service retries once if a commit lands in between.
+- **Undo and restore.** `restore(id, n)` saves version *n*'s contents as a new version, so
+  history is never rewritten and a restore can itself be undone. `undo(id)` restores the
+  version before the current one. Redo is restoring the later version.
+- **Example project.** `example-lbo` is seeded from `examples/lbo` at startup (a new version
+  when the files change). Every write to it fails with `read_only_project`; `duplicate`
+  makes an editable copy.
+- **Delete** is soft: a deleted project disappears from lists, is kept for 30 days, and can
+  be restored with `restore_project(id)`.
+- **Retention.** A daily job keeps the last 50 versions of each project plus one per day for
+  90 days, purges projects deleted more than 30 days ago, and writes `backups/meta/`. R2
+  object versioning is turned on for the bucket.
+- **Errors** use epm's codes and messages: model problems are diagnostics in results, bad
+  requests raise `EpmError` (`unknown_project`, `read_only_project`, `version_conflict`).
+
+### 12.6 HTTP API
+
+All under `/api`, JSON in and out, errors as `{code, message}`. CORS allows any origin.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /projects?q=` · `POST /projects` | List and search; create (empty, or `{"from": "example-lbo"}`) |
+| `POST /projects/import` | Upload an `.epm` (multipart) as a new project |
+| `GET /projects/{id}` · `PATCH /projects/{id}` · `DELETE /projects/{id}` | Metadata; rename; delete |
+| `POST /projects/{id}/duplicate` · `POST /projects/{id}/restore` | Copy; undelete |
+| `GET /projects/{id}/export?version=` | Download the `.epm` |
+| `GET /projects/{id}/state` | The UI snapshot (same shape as `fm serve`), plus `project` and `version` |
+| `POST /projects/{id}/batches` | `{ops, mode, expected_version, label}` |
+| `GET /projects/{id}/trace/{name}` · `GET /projects/{id}/sources/{name}/preview` | As locally |
+| `POST /projects/{id}/run` · `/sweep` · `/analyses/{name}/run` | Evaluate; `save: true` stores the result (and plot) as an output |
+| `GET /projects/{id}/files` · `GET /projects/{id}/files/{path}` | List and download inputs |
+| `GET /projects/{id}/outputs` · `GET /projects/{id}/outputs/{oid}` | List and download outputs, including plot PNGs |
+| `GET /projects/{id}/versions` · `GET /projects/{id}/versions/{n}/export` | History; download a version |
+| `POST /projects/{id}/versions/{n}/restore` · `POST /projects/{id}/undo` | Recover |
+| `GET /health` | Liveness for Railway |
+
+### 12.7 MCP
+
+The official `mcp` Python SDK, streamable HTTP transport, mounted at `/mcp` on the same app.
+Tools mirror the service layer; every tool except the first three requires `project_id`.
+
+| Tool | Notes |
+| --- | --- |
+| `list_projects`, `search_projects`, `create_project` | `create_project` can copy the example |
+| `get_project`, `rename_project`, `duplicate_project`, `delete_project` | |
+| `list_objects`, `show`, `trace`, `validate`, `list_builtins` | Read the model |
+| `apply_batch` | `ops`, `mode` (`commit` or `dry_run`), optional `expected_version`, `label` |
+| `run`, `sweep`, `run_analysis` | Results as JSON; `save` stores an output |
+| `list_files`, `list_outputs`, `export_project` | Exports return a download URL on the HTTP API |
+| `list_versions`, `undo`, `rollback` | `rollback(project_id, version)` restores that version, so a person can simply ask the agent to undo or roll back |
+
+Tool descriptions carry the ground rules from the agent guide (read before writing, preview
+with `dry_run`, name every assumption).
+
+### 12.8 Web frontend (`frontend-web/`)
+
+A standalone Vite + React package, started from a copy of `frontend-local`'s editors,
+graph, inspector and tables, with its own API client over `/api/projects/{id}/...`. The two
+packages share no code, so either can change without breaking the other. `VITE_API_URL`
+points it at the service; `vercel.json` rewrites routes to `index.html`.
+
+- **Routes.** `/` projects, `/p/:projectId` a project, `/docs` the user guide.
+- **Projects page.** Search, create, open, rename, duplicate, delete, and import or export
+  `.epm` files. The example project is pinned at the top.
+- **Project view.** The local UI's layout (explorer, graph, editors, inspector, bottom
+  panel) without the terminal, proposals and undo/redo buttons.
+- **Autosave.** Form editors commit on save, and the text editors (`model.json`,
+  `functions.py`) commit after a pause in typing, each with `expected_version`. The top bar
+  shows the save state: saving, saved (version and time), conflict (reload, keeping the
+  unsaved text to copy), or error.
+- **Versions panel.** Each version's label, source and time, with download and restore.
+- **Files and outputs.** Upload and download inputs; download run results, sweep results
+  and analysis plots (PNG) saved as outputs.
+- **Example project.** A read-only banner and a **Make an editable copy** button; editors
+  are disabled.
+- **Share.** A **Copy link** button gives `/p/{project_id}`. During the alpha anyone with
+  the link can open and edit the project; once Supabase Auth lands, the same link asks the
+  recipient to sign in first. An `AuthGate` component already wraps the routes and lets
+  everyone through.
+- **Docs page.** Renders `docs/user-guide.md`, copied into the bundle by a prebuild script
+  so the package builds on its own.
+
+### 12.9 Docs
+
+- **`docs/user-guide.md`** (new, shown in the web app): modeling conventions, the projects
+  workflow, project IDs, sharing links, import and export, files and outputs, autosave and
+  recovering versions, the HTTP API and MCP with examples, and the alpha's open access.
+- **Onboarding example**, end to end: open the app → copy the example project → change an
+  assumption → run the model → inspect and export results (`.epm`, results, plot) → connect
+  an MCP client to `/mcp` and edit the same project by its `project_id` → undo through MCP.
+- **Tested like the rest.** The guide's HTTP and MCP examples run in `service/tests`
+  against the in-memory stores, as `tests/test_docs.py` does for the agent guide.
+- README, AGENTS.md and the agent guide point to the service and the two frontends.
+
+### 12.10 Deployment and CI
+
+- **Railway.** `service/Dockerfile` installs epm from the repo root and
+  `service/requirements.txt`, and runs `uvicorn service.service:app --host 0.0.0.0 --port
+  $PORT`. `railway.toml` at the root points to it. The retention and backup job runs daily
+  inside the service.
+- **Supabase.** Apply `service/schema.sql` once.
+- **Vercel.** Root directory `frontend-web`, build `npm run build`, output `dist`,
+  `VITE_API_URL` set to the Railway URL.
+- **CI.** The existing jobs, with `frontend` renamed to `frontend-local`, plus a `service`
+  job (ruff and `pytest service/tests`) and a `frontend-web` job (typecheck, unit tests,
+  build, and Playwright end-to-end tests against the service on in-memory stores).
+
+## 13. Risks
 
 - **Recurrence speed.** Period stepping is slower than vectorized evaluation. Mitigated by
   scalar point evaluation (see the M12 notes), and models have few periods (about 10–40).
@@ -453,3 +687,14 @@ Edits preview and commit in about 25 ms. A synthetic model of 10,000 metrics bui
   untrusted-code sandbox. Document this clearly.
 - **Solver convergence.** Use damping and a clear failure status, and fall back to
   opening-balance interest if needed.
+- **Open alpha.** Anyone who finds the service URL can read, edit and delete any project
+  except the example, and run custom functions on the server. Versions, soft delete and
+  backups make damage recoverable; Supabase Auth closes it. Don't put real deal data in the
+  alpha.
+- **Hard-coded credentials.** Anyone with access to the repository has the Supabase and R2
+  keys. Rotate them, and move them to environment variables, before the repository or the
+  app is shared further.
+- **Per-request cost.** Stateless requests rebuild the engine and start the function worker
+  each time. The blob and value caches keep this to a fraction of a second for the sample
+  LBO; if it isn't enough, keep recently used workspaces in memory keyed by
+  `(project_id, version)`, which stays stateless in behaviour.
