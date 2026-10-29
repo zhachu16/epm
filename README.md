@@ -1,24 +1,29 @@
-# epm
+# epm (local app)
 
 A financial modelling engine where models are built from **named metrics and formulas**
 instead of cell references, evaluated with pandas. Each quantity is defined once. Tables,
 analyses and checks refer to it by name. Agents and people edit models through the same
-structured operations, from the web UI, the `fm` CLI or the Python API.
+structured operations: the web UI, the `fm` CLI or the Python API.
 
-See [`docs/PLAN.md`](docs/PLAN.md) for the full design and milestones.
+This branch is **the local app**: the engine, the `fm` CLI, and `fm serve` with its web UI,
+working on models on your disk. Nothing here needs an account or a network connection.
 
-## Status
+> This branch is generated from `main` of [zhachu16/epm](https://github.com/zhachu16/epm)
+> after its checks pass. Make changes on `main`; anything committed here is overwritten.
+> The hosted version (a service and a web app with projects and versions) lives on `main`
+> and on the `web-backend` and `web-frontend` branches.
 
-All milestones (M0–M12) are done: the engine, sources, solver, archives and cache, editing
-operations, custom functions, sweeps and analyses, the `fm` CLI, a complete sample LBO, the
-`fm serve` session server, the web UI, and a performance pass. A 1,000-scenario sweep of the
-sample LBO takes a few seconds; `python benchmarks/run.py` measures it.
+| Path | What |
+| --- | --- |
+| [`epm/`](epm) | The engine: formulas, evaluation, editing operations, `fm` and `fm serve`. |
+| [`frontend-local/`](frontend-local) | The UI that `fm serve` shows in your browser. |
+| [`examples/lbo/`](examples/lbo) | A complete sample LBO, checked against an independent calculation. |
+| [`docs/`](docs) | The [agent guide](docs/agent-guide.md) and the [design](docs/PLAN.md). |
+| [`tests/`](tests), [`benchmarks/`](benchmarks) | The test suite and timings. |
 
 **Agents** building or changing models should start with the
-[agent guide](docs/agent-guide.md). The hosted version, with projects, versions, an HTTP
-API and an MCP endpoint, is described in the [user guide](docs/user-guide.md), and
-[deploying it](docs/deployment.md) on Render and Vercel. People working on epm itself:
-see [`AGENTS.md`](AGENTS.md).
+[agent guide](docs/agent-guide.md). People working on epm itself: see
+[`AGENTS.md`](AGENTS.md).
 
 ## Quick start
 

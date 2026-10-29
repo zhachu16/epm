@@ -16,6 +16,10 @@ from epm.formula import BUILTINS
 ROOT = Path(__file__).resolve().parents[1]
 GUIDE = ROOT / "docs" / "agent-guide.md"
 README = ROOT / "README.md"
+# the README of the generated local-app branch, which runs these same tests
+LOCAL_README = ROOT / "scripts" / "branch-readmes" / "local-app.md"
+DOCS = [GUIDE, README, *([LOCAL_README] if LOCAL_README.exists() else [])]
+DOC_IDS = ["guide", "readme", "local-app-readme"][: len(DOCS)]
 
 
 def blocks(path: Path, lang: str) -> list[str]:
@@ -45,7 +49,7 @@ def lbo(tmp_path: Path) -> Path:
     return target
 
 
-@pytest.mark.parametrize("path", [GUIDE, README], ids=["guide", "readme"])
+@pytest.mark.parametrize("path", DOCS, ids=DOC_IDS)
 def test_example_batches_apply_cleanly(path, lbo):
     examples = batches(path)
     assert examples
@@ -58,7 +62,7 @@ def test_example_batches_apply_cleanly(path, lbo):
         ws.close()
 
 
-@pytest.mark.parametrize("path", [GUIDE, README], ids=["guide", "readme"])
+@pytest.mark.parametrize("path", DOCS, ids=DOC_IDS)
 def test_example_commands_run(path, lbo, monkeypatch):
     commands = lbo_commands(path)
     assert commands
@@ -89,7 +93,7 @@ def test_guide_diagnostic_codes_exist():
     assert sorted(c for c in codes if f'"{c}"' not in source) == []
 
 
-@pytest.mark.parametrize("path", [GUIDE, README], ids=["guide", "readme"])
+@pytest.mark.parametrize("path", DOCS, ids=DOC_IDS)
 def test_python_examples_run(path, lbo, monkeypatch):
     examples = [b for b in blocks(path, "python") if "Workspace.open" in b]
     assert examples
