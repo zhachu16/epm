@@ -93,8 +93,12 @@ def values_table(values: dict[str, Any], units: dict[str, str | None]) -> str:
 
 
 class Output:
-    def __init__(self, as_json: bool):
+    """Writes to the terminal, or to ``out``/``err`` callables when run inside a server."""
+
+    def __init__(self, as_json: bool, out=None, err=None):
         self.as_json = as_json
+        self._out = out or (lambda text: typer.echo(text))
+        self._err = err or (lambda text: typer.echo(text, err=True))
 
     def emit(
         self,
@@ -112,14 +116,14 @@ class Output:
                 "errors": clean(errors),
                 "warnings": clean(warnings),
             }
-            typer.echo(json.dumps(envelope, allow_nan=False, ensure_ascii=False))
+            self._out(json.dumps(envelope, allow_nan=False, ensure_ascii=False))
         else:
             if text:
-                typer.echo(text)
+                self._out(text)
             for w in warnings:
-                typer.echo(f"warning: {_describe(w)}", err=True)
+                self._err(f"warning: {_describe(w)}")
             for e in errors:
-                typer.echo(f"error: {_describe(e)}", err=True)
+                self._err(f"error: {_describe(e)}")
         if not ok:
             raise typer.Exit(1)
 

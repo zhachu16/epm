@@ -135,4 +135,17 @@ def apply_function(state: State, op: Op) -> list[Op]:
     raise OpFailure("invalid_op", f"unknown operation '{op.op}'")
 
 
+def apply_functions_file(state: State, op: Op) -> list[Op]:
+    """Replace the whole of functions.py (text editing)."""
+    code = (op.set or {}).get("code")
+    if code is not None and not isinstance(code, str):
+        raise OpFailure("invalid_definition", "'code' must be text")
+    if code:
+        _tree(code)
+    old = state.functions
+    state.functions = code or None
+    return [Op(op="update", kind="functions", set={"code": old})]
+
+
 HANDLERS["function"] = apply_function
+HANDLERS["functions"] = apply_functions_file

@@ -124,6 +124,7 @@ class Workspace:
         self.path = Path(path) if path is not None else None
         self.cache = ValueCache()
         self._engine: Engine | None = None
+        self.version = 0  # bumped on every change to definitions or inputs
         self.history: list[HistoryEntry] = []  # session only: never saved to the archive
         self.redo_stack: list[HistoryEntry] = []
         self.pending: dict[str, PendingBatch] = {}
@@ -184,6 +185,7 @@ class Workspace:
 
     def invalidate(self) -> None:
         self._engine = None
+        self.version += 1
 
     def _runtime_for(self, functions: str | None) -> FunctionRuntime | None:
         if not functions:
@@ -224,6 +226,7 @@ class Workspace:
         self.functions = state.functions
         self.inputs = dict(state.inputs)
         self._engine = engine
+        self.version += 1
         self._prune_runtimes()
 
     # -- editing -----------------------------------------------------------------------

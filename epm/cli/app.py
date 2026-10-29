@@ -32,15 +32,34 @@ app = typer.Typer(
 
 
 class State:
-    def __init__(self, model: Path | None, as_json: bool):
+    """Per-invocation context.
+
+    Standalone, each command opens the model, works on it and saves. Inside ``fm serve``
+    the server passes its live workspace (``in_session``), so commands share the
+    session's undo history and pending batches, and the server does the saving.
+    """
+
+    def __init__(
+        self,
+        model: Path | None,
+        as_json: bool,
+        workspace: Workspace | None = None,
+        out=None,
+        err=None,
+    ):
         self.model = model
-        self.out = Output(as_json)
-        self._ws: Workspace | None = None
+        self.out = Output(as_json, out, err)
+        self._ws = workspace
+        self.in_session = workspace is not None
 
     def workspace(self) -> Workspace:
         if self._ws is None:
             self._ws = Workspace.open(find_model(self.model))
         return self._ws
+
+    def save(self, ws: Workspace) -> None:
+        if not self.in_session:
+            ws.save()
 
 
 def find_model(path: Path | None) -> Path:
@@ -70,6 +89,9 @@ def main(
     ] = None,
     as_json: Annotated[bool, typer.Option("--json", help="Print a JSON envelope.")] = False,
 ) -> None:
+    if isinstance(ctx.obj, State):  # provided by fm serve
+        ctx.obj.out.as_json = as_json
+        return
     ctx.obj = State(model, as_json)
 
 
@@ -228,7 +250,7 @@ def commit(ctx: typer.Context, ops: list[dict], allow_errors: bool = False) -> N
     ws = state.workspace()
     result = ws.apply(ops, allow_errors=allow_errors)
     if result.ok:
-        ws.save()
+        state.save(ws)
     state.out.emit(
         result.to_dict(),
         batch_text(result),
@@ -449,7 +471,7 @@ def run(
     outputs = [o for item in output or [] for o in _csv(item) or []] or None
     result = ws.run(parse_assignments(set_), outputs)
     if save_cache:
-        ws.save()
+        state.save(ws)
     units = {n: ws.engine.unit(n) for n in result.values}
     lines = [values_table(result.values, units)]
     if result.checks:
@@ -533,15 +555,16 @@ def apply_batch(
     batch = json.loads(text)
     ws = state.workspace()
     warnings = []
-    if propose:
+    if propose and not state.in_session:
         # without a session to hold it, a proposal is only a preview
         warnings.append(
             {"code": "no_session", "message": "no fm serve session; showing a preview instead"}
         )
-        dry_run = True
-    result = ws.apply(batch, mode="dry_run" if dry_run else "commit", allow_errors=allow_errors)
+        propose, dry_run = False, True
+    mode = "propose" if propose else "dry_run" if dry_run else "commit"
+    result = ws.apply(batch, mode=mode, allow_errors=allow_errors)
     if result.ok and result.committed:
-        ws.save()
+        state.save(ws)
     state.out.emit(
         result.to_dict(),
         batch_text(result),
@@ -581,7 +604,7 @@ def init(
         data["settings"]["default_axis"] = axis
         model = Model.model_validate(data)
     ws = Workspace(model, path=path)
-    ws.save()
+    state.save(ws)
     state.out.emit({"path": str(path)}, f"created {path}")
 
 
@@ -601,68 +624,132 @@ def unpack_cmd(ctx: typer.Context, archive: Path, directory: Path) -> None:
     ctx.obj.out.emit({"path": str(directory)}, f"unpacked into {directory}")
 
 
-def _needs_session(what: str) -> None:
-    raise EpmError(
-        "no_session",
-        f"{what} needs a running `fm serve` session: history and pending batches are kept "
-        "in memory only, and each CLI command is its own session",
-    )
+def _session(ctx: typer.Context, what: str) -> tuple[State, Workspace]:
+    state: State = ctx.obj
+    if not state.in_session:
+        raise EpmError(
+            "no_session",
+            f"{what} needs a running `fm serve` session: history and pending batches are kept "
+            "in memory only, and each CLI command is its own session",
+        )
+    return state, state.workspace()
 
 
 @app.command()
 @command
 def history(ctx: typer.Context) -> None:
     """Show this session's committed batches (needs fm serve)."""
-    _needs_session("history")
+    state, ws = _session(ctx, "history")
+    rows = [[e.id, e.label] for e in ws.history]
+    text = table(rows, ["id", "committed"]) if rows else "no committed batches in this session"
+    if ws.redo_stack:
+        text += f"\n{len(ws.redo_stack)} batch(es) can be redone"
+    data = {
+        "history": [e.to_dict() for e in ws.history],
+        "redo": [e.to_dict() for e in ws.redo_stack],
+    }
+    state.out.emit(data, text)
 
 
 @app.command()
 @command
 def undo(ctx: typer.Context) -> None:
     """Undo the last committed batch (needs fm serve)."""
-    _needs_session("undo")
+    state, ws = _session(ctx, "undo")
+    entry = ws.undo()
+    state.out.emit(entry.to_dict(), f"undid: {entry.label}")
 
 
 @app.command()
 @command
 def redo(ctx: typer.Context) -> None:
     """Redo the last undone batch (needs fm serve)."""
-    _needs_session("redo")
+    state, ws = _session(ctx, "redo")
+    entry = ws.redo()
+    state.out.emit(entry.to_dict(), f"redid: {entry.label}")
 
 
 @app.command()
 @command
 def rollback(ctx: typer.Context, batch_id: str) -> None:
     """Undo everything after a committed batch (needs fm serve)."""
-    _needs_session("rollback")
+    state, ws = _session(ctx, "rollback")
+    undone = ws.rollback(batch_id)
+    state.out.emit(
+        {"undone": [e.to_dict() for e in undone]},
+        "\n".join(f"undid: {e.label}" for e in undone) or "nothing to undo",
+    )
 
 
 @pending_app.command("list")
 @command
 def pending_list(ctx: typer.Context) -> None:
     """List proposed batches (needs fm serve)."""
-    _needs_session("pending batches")
+    state, ws = _session(ctx, "pending batches")
+    rows = [{"id": p.id, "label": p.preview.label, "at": p.at} for p in ws.pending.values()]
+    text = table([[r["id"], r["label"]] for r in rows], ["id", "proposed"]) if rows else "none"
+    state.out.emit(rows, text)
+
+
+@pending_app.command("show")
+@command
+def pending_show(ctx: typer.Context, batch_id: str) -> None:
+    """Show a proposed batch's changes and effect (needs fm serve)."""
+    state, ws = _session(ctx, "pending batches")
+    if batch_id not in ws.pending:
+        raise EpmError("not_found", f"no pending batch '{batch_id}'")
+    preview = ws.pending[batch_id].preview
+    state.out.emit(preview.to_dict(), batch_text(preview))
 
 
 @pending_app.command("commit")
 @command
 def pending_commit(ctx: typer.Context, batch_id: str) -> None:
     """Commit a proposed batch (needs fm serve)."""
-    _needs_session("pending batches")
+    state, ws = _session(ctx, "pending batches")
+    result = ws.commit_pending(batch_id)
+    state.out.emit(
+        result.to_dict(),
+        batch_text(result),
+        ok=result.ok,
+        errors=[e.to_dict() for e in result.errors],
+    )
 
 
 @pending_app.command("reject")
 @command
 def pending_reject(ctx: typer.Context, batch_id: str) -> None:
     """Reject a proposed batch (needs fm serve)."""
-    _needs_session("pending batches")
+    state, ws = _session(ctx, "pending batches")
+    ws.reject_pending(batch_id)
+    state.out.emit({"rejected": batch_id}, f"rejected {batch_id}")
 
 
 @app.command()
 @command
-def serve(ctx: typer.Context) -> None:
-    """Start the web UI and session server (arrives with milestone M9)."""
-    raise EpmError("not_implemented", "fm serve arrives with the web UI (milestone M9)")
+def serve(
+    ctx: typer.Context,
+    port: Annotated[int, typer.Option(help="Port (0 picks a free one).")] = 8765,
+    host: Annotated[str, typer.Option(help="Interface to listen on.")] = "127.0.0.1",
+    open_browser: Annotated[bool, typer.Option("--open/--no-open", help="Open the UI.")] = False,
+    no_auth: Annotated[
+        bool, typer.Option("--no-auth", help="Skip the session token (development).")
+    ] = False,
+    frontend: Annotated[Path | None, typer.Option(help="Built frontend directory.")] = None,
+) -> None:
+    """Serve the web UI and a session that keeps undo history and pending proposals."""
+    from ..server import serve as run_server
+
+    state: State = ctx.obj
+    run_server(
+        find_model(state.model),
+        host=host,
+        port=port,
+        open_browser=open_browser,
+        auth=not no_auth,
+        frontend=frontend,
+        announce=lambda text: state.out.emit(None, text) if not state.out.as_json else None,
+    )
 
 
 # -- metrics ------------------------------------------------------------------------------
@@ -1141,4 +1228,7 @@ def analysis_run(
 
 
 def run_cli() -> None:
-    app()
+    """Entry point: forwards to a running ``fm serve`` session when there is one."""
+    from .routing import run
+
+    run()

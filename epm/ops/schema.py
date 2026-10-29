@@ -15,6 +15,7 @@ Kind = Literal[
     "circularity",
     "analysis",
     "function",
+    "functions",
     "file",
     "settings",
 ]
@@ -32,7 +33,8 @@ class Op(BaseModel):
     * ``rename``: rename ``name`` to ``to`` and update every reference.
 
     ``file`` operations carry base64 content in ``data``; ``function`` definitions are
-    ``{"code": "<python source of one @function>"}``; ``settings`` takes ``update`` only.
+    ``{"code": "<python source of one @function>"}``. ``settings`` and ``functions`` (the
+    whole functions.py, ``set={"code": ...}``) take ``update`` only and no name.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -47,9 +49,9 @@ class Op(BaseModel):
 
     @model_validator(mode="after")
     def _shape(self) -> Op:
-        if self.kind == "settings":
+        if self.kind in ("settings", "functions"):
             if self.op != "update":
-                raise ValueError("settings only support 'update'")
+                raise ValueError(f"{self.kind} only support 'update'")
         elif not self.name:
             raise ValueError(f"'{self.op}' needs a 'name'")
         if self.op == "create" and self.definition is None and self.kind != "file":
@@ -63,7 +65,7 @@ class Op(BaseModel):
         return self
 
     def describe(self) -> str:
-        target = self.kind if self.kind == "settings" else f"{self.kind} '{self.name}'"
+        target = self.kind if self.name is None else f"{self.kind} '{self.name}'"
         return f"{self.op} {target}" + (f" → '{self.to}'" if self.to else "")
 
     def to_dict(self) -> dict[str, Any]:
