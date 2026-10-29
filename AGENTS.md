@@ -89,5 +89,9 @@ CI runs all of these. The end-to-end tests need the built UI and a Chromium for 
   Their READMEs are `scripts/branch-readmes/<branch>.md`; the local-app one is tested like
   `README.md`. The exception is `service/config.py` on `web-backend`: it holds the
   deployment's credentials, is edited there only, and is kept when the branch is rebuilt.
-  Never put real credentials on `main`.
+  Never put real credentials on `main`, and keep everything that isn't secret in
+  `service/deployment.py`, which updates from `main`.
+- **One name per project.** A project's name and its model's `settings.name` are kept
+  equal: creating, copying, importing and renaming a project write it into the model, and a
+  batch or restore that changes `settings.name` renames the project.
 - **Style.** Ruff with a line length of 100. Comments explain why, not what.

@@ -104,6 +104,18 @@ def test_sweep_rename_delete_and_errors(model):
     assert code == 1 and data["errors"][0]["code"] == "no_session"
 
 
+def test_show_settings(model):
+    data, code = fmj("show", "settings")
+    assert code == 0 and data["data"]["kind"] == "settings"
+    assert data["data"]["definition"]["default_axis"] == "fy"
+    assert data["data"]["definition"]["key_outputs"] == []  # defaults are shown too
+    assert fm("metric", "set", "settings", "--value", "1").exit_code == 0
+    data, _ = fmj("show", "settings")
+    assert data["data"]["kind"] == "metric"  # an object with the name wins
+    data, _ = fmj("show", "settings", "--kind", "settings")
+    assert data["data"]["kind"] == "settings"
+
+
 def test_apply_batches_from_file_and_stdin(model, tmp_path):
     batch = {
         "label": "add assumptions",

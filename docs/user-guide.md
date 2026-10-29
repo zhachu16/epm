@@ -201,12 +201,15 @@ its saved versions and outputs.
 | Create an empty model | **New project** | `POST /api/projects` with `{"name": ...}` |
 | Copy a project | **Duplicate**, or **Make an editable copy** for the example | `POST /api/projects/{project_id}/duplicate` |
 | Open | click its name, or go to `/p/{project_id}` | `GET /api/projects/{project_id}/state` |
-| Rename | click the name in the top bar, or **Rename** | `PATCH /api/projects/{project_id}` |
+| Rename | click the name in the top bar, or **Rename** | `PATCH /api/projects/{project_id}` with `{"name": ...}` |
 | Delete | **Delete** | `DELETE /api/projects/{project_id}` |
 | Bring back | **Show recently deleted → Restore** | `POST /api/projects/{project_id}/restore` |
 
 - **Project IDs** are assigned at creation and never change, even when the project is
   renamed. Use them in links, API calls and MCP tools.
+- **Names.** A project's name is also its model's own name (`settings.name`), the one an
+  exported `.epm` file carries. Renaming saves a new version; changing `settings.name`
+  renames the project; restoring a version brings back the name it had.
 - **The example** (`example-lbo`) is read-only for everyone. You can open it, preview
   changes, run it and download it; copy it to change it.
 - **Deleting** hides a project. It can be restored for 30 days, then it is removed for
@@ -327,7 +330,7 @@ serves interactive documentation at `/api/docs`.
 | `POST /api/projects` | Create: `{"name", "description", "from"}`; `from` copies a project |
 | `POST /api/projects/import?name=` | Create from an `.epm` file (the request body) |
 | `GET /api/projects/{project_id}` | A project's name, description and current version |
-| `PATCH /api/projects/{project_id}` | Rename, or change the description |
+| `PATCH /api/projects/{project_id}` | Rename (saves a version), or change the description |
 | `DELETE /api/projects/{project_id}` | Delete (restorable for 30 days) |
 | `POST /api/projects/{project_id}/duplicate` | Copy into a new project: `{"name"}` |
 | `POST /api/projects/{project_id}/restore` | Bring back a deleted project |
@@ -372,7 +375,7 @@ back as tool errors whose text starts with the error code, for example
 | --- | --- |
 | `list_projects`, `search_projects` | Find projects and their IDs |
 | `create_project` | A new empty model, or a copy (`from_project: "example-lbo"`) |
-| `get_project`, `rename_project` | Read or change a project's name and description |
+| `get_project`, `rename_project` | Read a project, with `web_url`, its page in the web app; rename it or change its description |
 | `duplicate_project`, `delete_project`, `undelete_project` | Copy, delete, bring back |
 | `list_objects`, `show`, `trace`, `show_table`, `validate` | Read the model |
 | `list_builtins` | The formula functions |
