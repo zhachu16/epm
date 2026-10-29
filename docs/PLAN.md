@@ -16,9 +16,10 @@ and a structured API that agents can drive.
 | Undo history | Session only. It lives in memory in the `fm serve` process and is never written to the archive. |
 | Debt tranches | Separate 1-D metrics per tranche (`tlb_close`, `notes_close`, `revolver_close`). Totals are explicit formulas. |
 | Stack | Python 3.12+, pandas, numpy, openpyxl, pyarrow, FastAPI, Typer, pydantic v2. Frontend: React, TypeScript, Vite, Monaco, React Flow + elkjs, ECharts, xterm.js, react-resizable-panels, TanStack Query. |
-| Cloud delivery | A `service/` folder next to `epm/`, deployed together on Railway as one long-running container. The web frontend is hosted on Vercel. See section 12. |
+| Cloud delivery | A `service/` folder next to `epm/`, deployed together on Render as one long-running Docker container. The web frontend is hosted on Vercel. See section 12. |
 | Cloud storage | Supabase Postgres for metadata (projects, versions, outputs); Cloudflare R2 for `.epm` archives, inputs and outputs. |
 | Cloud auth | None during the alpha. The app and both APIs are open; Supabase Auth comes later. No API tokens or shared secrets. |
+| Branches | `main` holds everything. `local-app`, `web-frontend` (Vercel) and `web-backend` (Render) are generated from it after CI passes, each with only the folders its target needs. |
 | Cloud concurrency | Stateless: each request loads the project's latest version, applies, and saves a new version. Every saved version can be restored. |
 
 ## Repository layout
@@ -393,10 +394,10 @@ served by `fm serve` from `frontend-local/dist`. The cloud web app is a separate
 | M16 | MCP endpoint over the same service layer | done |
 | M17 | `frontend-web`: projects page, project view, autosave status, versions, files and outputs, share links, example copy, docs page | done |
 | M18 | Docs: user guide with HTTP and MCP usage and the onboarding example, all tested | done |
-| M19 | Deployment: Dockerfile and Railway config, Vercel config, CI jobs, retention and backup job | planned |
+| M19 | Deployment: Dockerfile and Render blueprint, Vercel config, deployment branches, smoke test, CI jobs | done |
 
-The backend (M0–M9) is usable headless by agents before any UI work starts. M13–M19 land
-on one branch and go out as one pull request.
+The backend (M0–M9) is usable headless by agents before any UI work starts. M13–M19 were
+built on one branch, then promoted to `main`.
 
 ### Notes from building M0–M8
 
@@ -461,7 +462,7 @@ Edits preview and commit in about 25 ms. A synthetic model of 10,000 metrics bui
 
 ## 12. Cloud service (alpha)
 
-A hosted version of epm: a web app on Vercel, and a service on Railway that runs the epm
+A hosted version of epm: a web app on Vercel, and a service on Render that runs the epm
 engine behind an HTTP API and an MCP endpoint. Projects live in Supabase (metadata) and R2
 (files). The local app (`fm`, `fm serve`, `frontend-local`) keeps working as it does today.
 
@@ -605,7 +606,7 @@ All under `/api`, JSON in and out, errors as `{code, message}`. CORS allows any 
 | `GET /projects/{id}/outputs` · `GET /projects/{id}/outputs/{oid}` | List and download outputs, including plot PNGs |
 | `GET /projects/{id}/versions` · `GET /projects/{id}/versions/{n}/export` | History; download a version |
 | `POST /projects/{id}/versions/{n}/restore` · `POST /projects/{id}/undo` | Recover |
-| `GET /health` | Liveness for Railway |
+| `GET /health` | Liveness for Render |
 
 ### 12.7 MCP
 
@@ -667,16 +668,26 @@ points it at the service; `vercel.json` rewrites routes to `index.html`.
 
 ### 12.10 Deployment and CI
 
-- **Railway.** `service/Dockerfile` installs epm from the repo root and
-  `service/requirements.txt`, and runs `python -m service.service --host 0.0.0.0 --port
-  $PORT`. `railway.toml` at the root points to it. The retention and backup job runs daily
-  inside the service.
+- **Render.** `service/Dockerfile` (built from the repository root) installs epm with its
+  plot extra and `service/requirements.txt`, runs as a non-root user, and starts
+  `python -m service.service --host 0.0.0.0 --port $PORT`. `render.yaml` is the blueprint:
+  one Docker web service on the `web-backend` branch, health-checked at `/api/health`. The
+  retention and backup job runs daily inside the service.
 - **Supabase.** Apply `service/schema.sql` once.
-- **Vercel.** Root directory `frontend-web`, build `npm run build`, output `dist`,
-  `VITE_API_URL` set to the Railway URL.
+- **Vercel.** Root directory `frontend-web`, production branch `web-frontend`, build
+  `npm run build`, output `dist`, `VITE_API_URL` set to the Render URL.
+- **Branches.** `scripts/split-branches.sh` builds `local-app`, `web-frontend` and
+  `web-backend` from `main`, each with only what its target needs, adding a commit to each
+  branch whose files changed (never force-pushing). The *Deployment branches* workflow runs
+  it after CI passes on `main`; CI itself skips those branches.
+- **Smoke test.** `python -m service.smoke URL` checks a deployed service end to end
+  (health, copy, edit, run, export, MCP) and deletes what it created. CI builds the Docker
+  image and runs the smoke test against it.
+- **Manual steps** (accounts, credentials, connecting Render and Vercel) are in
+  [deployment.md](deployment.md).
 - **CI.** The existing jobs, with `frontend` renamed to `frontend-local`, plus a `service`
-  job (ruff and `pytest service/tests`) and a `frontend-web` job (typecheck, unit tests,
-  build, and Playwright end-to-end tests against the service on in-memory stores).
+  job (tests, Docker build, smoke test), a `frontend-web` job (typecheck, unit tests, build)
+  and its Playwright end-to-end tests against the service on in-memory stores.
 
 ### 12.11 Notes from building M13–M17
 

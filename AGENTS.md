@@ -19,6 +19,7 @@ Notes for agents and people changing this repository. To *use* epm to build mode
 | `frontend-web/` | The cloud web app, hosted on Vercel. A standalone Vite + React app, separate from `frontend-local`. |
 | `examples/lbo/` | The sample LBO, checked by golden tests against an independent calculation. |
 | `benchmarks/run.py` | Timings for runs, edits and 1k-scenario sweeps. |
+| `scripts/split-branches.sh`, `render.yaml` | Deployment: the generated `local-app`, `web-frontend` and `web-backend` branches, and the Render blueprint. See [`docs/deployment.md`](docs/deployment.md). |
 
 ## Checks
 
@@ -80,4 +81,6 @@ CI runs all of these. The end-to-end tests need the built UI and a Chromium for 
 - **The service is stateless.** Each request loads a project version into a fresh
   `Workspace`; a commit saves a new version. Keep per-request state out of `Projects`
   except caches that are safe to lose (version archives, calculated values).
+- **Change `main`, not the deployment branches.** `local-app`, `web-frontend` and
+  `web-backend` are rebuilt from `main` after CI passes; edits made on them are overwritten.
 - **Style.** Ruff with a line length of 100. Comments explain why, not what.

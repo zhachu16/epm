@@ -1,0 +1,16 @@
+.git
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/cache
+**/test-results
+**/playwright-report
+.venv
+frontend-local
+frontend-web
+benchmarks
+tests
+service/tests

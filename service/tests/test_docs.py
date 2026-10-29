@@ -10,15 +10,11 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
-import threading
-import time
 from pathlib import Path
 
 import pytest
-import uvicorn
 
 from service.service import create_app
 from service.store import MemoryBlobStore, MemoryMetaStore
@@ -34,27 +30,6 @@ pytestmark = pytest.mark.skipif(
 
 def blocks(lang: str) -> list[str]:
     return re.findall(rf"```{lang}\n(.*?)```", GUIDE.read_text(), re.S)
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-@pytest.fixture(scope="module")
-def service_url():
-    port = _free_port()
-    app = create_app(MemoryMetaStore(), MemoryBlobStore())
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.time() + 30
-    while not server.started and time.time() < deadline:
-        time.sleep(0.05)
-    yield f"http://127.0.0.1:{port}"
-    server.should_exit = True
-    thread.join(10)
 
 
 def test_guide_examples_run(service_url, tmp_path):

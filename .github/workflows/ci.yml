@@ -2,6 +2,8 @@ name: CI
 
 on:
   push:
+    # the deployment branches are generated from main after CI passes there
+    branches-ignore: [local-app, web-frontend, web-backend]
   pull_request:
 
 jobs:
@@ -29,6 +31,12 @@ jobs:
           python-version: "3.13"
       - run: pip install -e ".[dev]" -r service/requirements.txt
       - run: pytest -q service/tests
+      - run: docker build -f service/Dockerfile -t epm-service .
+      - run: |
+          docker run -d --name epm -p 10000:10000 epm-service \
+            sh -c 'exec python -m service.service --memory --host 0.0.0.0 --port 10000'
+          for i in $(seq 30); do curl -sf localhost:10000/api/health && break; sleep 1; done
+          python -m service.smoke http://localhost:10000
 
   frontend-local:
     runs-on: ubuntu-latest

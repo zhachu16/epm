@@ -33,7 +33,7 @@ def create_app(
     """The service over any stores. ``maintenance`` runs the retention and backup job daily."""
     projects = Projects(meta, blobs, **options)
     mcp = build_mcp(projects)
-    # stateless: no MCP sessions to lose when Railway restarts or scales the service
+    # stateless: no MCP sessions to lose when the host restarts or scales the service
     mcp_app = mcp.streamable_http_app(
         streamable_http_path="/mcp", stateless_http=True, json_response=True, host="0.0.0.0"
     )
@@ -111,7 +111,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         meta, blobs = cloud_stores()
     app = create_app(meta, blobs, maintenance=not args.memory)
-    # Railway terminates TLS in front of the service, so trust its forwarded headers
+    # Render terminates TLS in front of the service, so trust its forwarded headers
     uvicorn.run(app, host=args.host, port=args.port, proxy_headers=True, forwarded_allow_ips="*")
 
 

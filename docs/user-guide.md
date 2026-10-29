@@ -395,5 +395,4 @@ python -m service.service --memory
 ```
 
 The web app (`frontend-web/`) then runs with `npm run dev` and talks to it; see its README.
-For real storage, fill in the Supabase and R2 settings in `service/config.py` and run
-`service/schema.sql` once in Supabase.
+For real storage and hosting on Render and Vercel, see [deploying epm](deployment.md).
