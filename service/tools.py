@@ -17,7 +17,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from epm.errors import EpmError
 from epm.sources import SourceError
 
-from . import config
+from . import deployment
 from .projects import EXAMPLE_ID, Projects
 
 INSTRUCTIONS = f"""\
@@ -36,6 +36,8 @@ Ground rules:
    and give metrics a unit and a folder.
 5. Every commit saves a new version. undo goes back one change; rollback restores any
    version from list_versions. Neither rewrites history, so both can be undone too.
+6. A project's name is its model's name: rename_project, or settings.name set in a batch,
+   renames both. show(project_id, "settings") reads the settings.
 """
 
 
@@ -56,8 +58,8 @@ def _call(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 
 def _base_url(ctx: Context | None) -> str:
-    if config.PUBLIC_URL:
-        return config.PUBLIC_URL.rstrip("/")
+    if deployment.PUBLIC_URL:
+        return deployment.PUBLIC_URL.rstrip("/")
     request = getattr(ctx.request_context, "request", None) if ctx is not None else None
     headers = getattr(request, "headers", None)
     if not headers or "host" not in headers:
@@ -67,7 +69,7 @@ def _base_url(ctx: Context | None) -> str:
 
 
 def _web_link(project_id: str) -> str | None:
-    return f"{config.WEB_URL.rstrip('/')}/p/{project_id}" if config.WEB_URL else None
+    return f"{deployment.WEB_URL.rstrip('/')}/p/{project_id}" if deployment.WEB_URL else None
 
 
 def build_mcp(projects: Projects) -> MCPServer:
@@ -107,8 +109,10 @@ def build_mcp(projects: Projects) -> MCPServer:
     def rename_project(
         project_id: str, name: str | None = None, description: str | None = None
     ) -> dict[str, Any]:
-        """Change a project's name or description. This does not create a version."""
-        return projects.rename(project_id, name, description)
+        """Change a project's name or description. The name is also the model's own name
+        (settings.name), so a new name saves a new version; setting settings.name with
+        apply_batch renames the project the same way."""
+        return projects.rename(project_id, name, description, source="mcp")
 
     @tool
     def duplicate_project(project_id: str, name: str | None = None) -> dict[str, Any]:
@@ -143,7 +147,8 @@ def build_mcp(projects: Projects) -> MCPServer:
     @tool
     def show(project_id: str, name: str) -> dict[str, Any]:
         """An object's definition and, for a metric, its value, axis, unit, status,
-        dependencies (depends_on) and dependants (used_by)."""
+        dependencies (depends_on) and dependants (used_by). name="settings" shows the model's
+        settings: name, currency, default_axis, strict_units and key_outputs."""
         return projects.show(project_id, name)
 
     @tool

@@ -8,8 +8,8 @@ import pytest
 
 from epm import EpmError
 from epm.package import read_package_bytes
-from service import config
-from service.projects import EXAMPLE_DIR, EXAMPLE_ID, Projects
+from service import deployment
+from service.projects import EXAMPLE_DIR, EXAMPLE_ID, Projects, model_name, named
 from service.store import MemoryBlobStore, MemoryMetaStore
 
 TAX = {"op": "update", "kind": "metric", "name": "tax_rate", "set": {"value": 0.3}}
@@ -108,7 +108,7 @@ def test_export_and_import_round_trip(projects, atlas):
     assert name == "atlas.epm"
     assert read_package_bytes(data).model.metrics["tax_rate"].value == 0.3
     imported = projects.import_epm(data)
-    assert imported["name"] == "Project Atlas LBO"  # from the model's settings
+    assert imported["name"] == "Atlas"  # the model's own name, kept equal to the project's
     assert tax(projects, imported["id"]) == 0.3
     old_name, old = projects.export_epm(atlas, version=1)
     assert old_name == "atlas-v1.epm"
@@ -245,7 +245,7 @@ def test_outputs(projects, atlas):
 
 def test_retention_keeps_recent_and_daily_versions(projects, atlas, stores, monkeypatch):
     meta, blobs = stores
-    monkeypatch.setattr(config, "KEEP_VERSIONS", 3)
+    monkeypatch.setattr(deployment, "KEEP_VERSIONS", 3)
     now = datetime.now(UTC)
     for i in range(6):
         projects.apply(atlas, [{**TAX, "set": {"value": 0.2 + i / 100}}])
@@ -269,7 +269,7 @@ def test_deleted_projects_are_purged_after_the_grace_period(projects, atlas, sto
     projects.delete(atlas)
     projects.maintain()
     assert projects.list_projects(deleted=True)  # still restorable
-    later = datetime.now(UTC) + timedelta(days=config.KEEP_DELETED_DAYS + 1)
+    later = datetime.now(UTC) + timedelta(days=deployment.KEEP_DELETED_DAYS + 1)
     assert projects.maintain(later)["purged_projects"] == [atlas]
     assert meta.get_project(atlas) is None and blobs.keys(f"projects/{atlas}/") == []
 
@@ -281,3 +281,54 @@ def test_blob_cache_is_bounded(stores):
     copy = projects.duplicate(EXAMPLE_ID)["id"]
     assert irr(projects, copy) > 0
     assert len(projects._blob_cache) == 1
+
+
+# -- the project's name is the model's name ----------------------------------------------------
+
+
+def settings_name(projects: Projects, project_id: str) -> str:
+    return projects.show(project_id, "settings")["definition"]["name"]
+
+
+def test_new_projects_carry_their_name_into_the_model(projects):
+    assert settings_name(projects, EXAMPLE_ID) == "Example: LBO"
+    copy = projects.duplicate(EXAMPLE_ID, "Atlas")["id"]
+    assert settings_name(projects, copy) == "Atlas"
+    _, data = projects.export_epm(copy)
+    assert model_name(data) == "Atlas"
+    assert projects.import_epm(data)["name"] == "Atlas"
+    assert settings_name(projects, projects.create("Fresh")["id"]) == "Fresh"
+    projects.seed_example()  # naming the example doesn't make it look changed
+    assert projects.get(EXAMPLE_ID)["current_version"] == 1
+
+
+def test_renaming_the_project_renames_the_model(projects, atlas):
+    projects.rename(atlas, description="only the description")
+    assert projects.get(atlas)["current_version"] == 1  # no version for a description
+    renamed = projects.rename(atlas, name="Atlas II", source="mcp")
+    assert renamed["name"] == "Atlas II" and renamed["current_version"] == 2
+    assert settings_name(projects, atlas) == "Atlas II"
+    latest = projects.list_versions(atlas)[0]
+    assert (latest["label"], latest["source"]) == ("rename to Atlas II", "mcp")
+    projects.rename(atlas, name="Atlas II")  # unchanged: nothing to save
+    assert projects.get(atlas)["current_version"] == 2
+
+
+def test_renaming_the_model_renames_the_project(projects, atlas):
+    rename = {"op": "update", "kind": "settings", "set": {"name": "Atlas III"}}
+    preview = projects.apply(atlas, [rename], "dry_run")
+    assert preview["ok"] and projects.get(atlas)["name"] == "Atlas"  # a preview renames nothing
+    projects.apply(atlas, [rename])
+    assert projects.get(atlas)["name"] == "Atlas III"
+    projects.undo(atlas)  # the earlier version's name comes back with it
+    assert projects.get(atlas)["name"] == "Atlas" == settings_name(projects, atlas)
+
+
+def test_a_save_realigns_a_model_whose_name_drifted(projects, atlas):
+    # a project saved before the names were kept equal
+    project = projects._project(atlas)
+    data = projects._blob(projects._version(project).blob_key)
+    projects._store_version(project, named(data, "Project Atlas LBO"), "old", "api")
+    assert settings_name(projects, atlas) == "Project Atlas LBO"
+    projects.apply(atlas, [TAX])
+    assert settings_name(projects, atlas) == "Atlas" and projects.get(atlas)["name"] == "Atlas"

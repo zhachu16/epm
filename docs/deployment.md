@@ -48,8 +48,9 @@ service refuses to start while any of them is still a placeholder.
 This is the one file you edit on a deployment branch. `split-branches.sh` keeps
 `web-backend`'s own `service/config.py` every time it rebuilds the branch, so the
 credentials never reach `main` or the other branches, and on `main` the file keeps its
-placeholders. A new setting added to `config.py` on `main` therefore has to be added to
-`web-backend`'s copy by hand.
+placeholders. `config.py` holds the credentials only: everything else the deployment needs
+(the web app's address, CORS, retention) is in `service/deployment.py`, which updates from
+`main` like any other code.
 
 The keys are readable by anyone who can read the repository. That is the alpha's
 choice for simplicity; keep the repository private, and move the keys to environment
@@ -85,10 +86,10 @@ it, reads it back over MCP, and deletes the copy.
 
 ## 6. Links back to the web app
 
-With both URLs known, set `WEB_URL` in `service/config.py` on `web-backend` to the Vercel
-URL, so MCP's `get_project` returns a link to the project in the web app. `PUBLIC_URL` can
-stay empty: the service takes its own address from each request. Commit to `web-backend`;
-Render redeploys.
+`WEB_URL` in `service/deployment.py` is the web app's address
+(`https://epm-alpha.nommo.cloud`), so MCP's `get_project` returns `web_url`, a link to the
+project in the web app. `PUBLIC_URL` can stay empty: the service takes its own address from
+each request. Change them on `main`; the service redeploys once CI passes.
 
 ## Day to day
 

@@ -70,6 +70,10 @@ fm -m examples/lbo --json table show income_statement
 ```
 
 ```bash
+fm -m examples/lbo --json show settings
+```
+
+```bash
 fm -m examples/lbo --json validate
 ```
 
@@ -77,7 +81,8 @@ fm -m examples/lbo --json validate
   `tables`, `checks`, `circularities`, `analyses`, `files`, or `builtins` (the formula
   functions, with signatures). `--search` matches names, folders and descriptions.
 - **`show NAME`** gives the definition and, for a metric, its value, axis, unit, status,
-  dependencies (`depends_on`) and dependants (`used_by`).
+  dependencies (`depends_on`) and dependants (`used_by`). `show settings` gives the model's
+  settings (name, currency, default axis, key outputs).
 - **`trace NAME`** walks dependencies `--upstream` (what it reads) or `--downstream` (what
   reads it).
 - **`validate`** reports every diagnostic without running scenarios.

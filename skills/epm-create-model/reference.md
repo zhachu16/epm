@@ -16,7 +16,7 @@ errors that start with a code, e.g. `read_only_project: ...` or `version_conflic
 | `get_project` | Read a project's name, description and `current_version` |
 | `rename_project`, `duplicate_project`, `delete_project`, `undelete_project` | Manage projects |
 | `list_objects` | List `metrics`, `inputs`, `axes`, `sources`, `functions`, `tables`, `checks`, `circularities`, `analyses`, `files` or `builtins`; `search` and `folder` narrow it |
-| `show` | One object: definition, value, unit, axis, status, `depends_on`, `used_by` |
+| `show` | One object: definition, value, unit, axis, status, `depends_on`, `used_by`; `"settings"` shows the settings |
 | `trace` | Dependencies `upstream` (what it reads) or `downstream` (what reads it) |
 | `show_table` | A table's rows with values per period |
 | `validate` | Every diagnostic, including failed checks |
@@ -95,7 +95,8 @@ period labels; with `columns`, each column is a series.
 formulas can't express. Only numpy, pandas and some standard modules can be imported.
 
 **settings**: `name`, `currency`, `default_axis`, `strict_units`, and `key_outputs` (the
-metrics every preview reports).
+metrics every preview reports). Read them with `show(project_id, "settings")`. `name` is the
+project's name: setting it renames the project, and `rename_project` sets it.
 
 ## Formulas
 

@@ -1,10 +1,11 @@
-"""Service configuration.
+"""The service's credentials.
 
-The alpha keeps credentials here, in code, on purpose. On `main` this file keeps its
-placeholders; the real values live only in the copy on the `web-backend` branch, which
-`scripts/split-branches.sh` never overwrites. Settings added here must be added to that copy
-by hand. Anyone who can read the repository can read the credentials, so rotate them and move
-them to environment variables before the repository or the app is shared further.
+The alpha keeps them here, in code, on purpose. On `main` this file keeps its placeholders;
+the real values live only in the copy on the `web-backend` branch, which
+`scripts/split-branches.sh` never overwrites. Everything else the deployment needs is in
+`deployment.py`, which updates from `main` as usual. Anyone who can read the repository can
+read the credentials, so rotate them and move them to environment variables before the
+repository or the app is shared further.
 """
 
 from __future__ import annotations
@@ -18,22 +19,6 @@ R2_ACCOUNT_ID = "YOUR-CLOUDFLARE-ACCOUNT-ID"
 R2_ACCESS_KEY_ID = "YOUR-R2-ACCESS-KEY-ID"
 R2_SECRET_ACCESS_KEY = "YOUR-R2-SECRET-ACCESS-KEY"
 R2_BUCKET = "epm"
-
-# The browser origins allowed to call the API. The alpha is open: any origin.
-CORS_ORIGINS = ["*"]
-
-# Where the service and the web app are reachable, for links in MCP results. Empty: the
-# service URL is taken from the request, and project links to the web app are left out.
-PUBLIC_URL = ""
-WEB_URL = ""
-
-# Retention: the newest versions kept per project, then one per day for this many days.
-KEEP_VERSIONS = 50
-KEEP_DAILY_DAYS = 90
-# Deleted projects can be restored for this many days, then they are purged.
-KEEP_DELETED_DAYS = 30
-# How often the retention and backup job runs, in seconds.
-MAINTENANCE_INTERVAL = 24 * 60 * 60
 
 
 def configured() -> bool:

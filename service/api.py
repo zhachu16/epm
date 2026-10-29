@@ -171,8 +171,10 @@ def router(projects: Projects) -> APIRouter:
         return projects.get(project_id)
 
     @api.patch("/projects/{project_id}")
-    def update_project(project_id: str, body: UpdateProject) -> dict[str, Any]:
-        return projects.rename(project_id, body.name, body.description)
+    def update_project(
+        project_id: str, body: UpdateProject, client: str | None = Client
+    ) -> dict[str, Any]:
+        return projects.rename(project_id, body.name, body.description, _source(client))
 
     @api.delete("/projects/{project_id}")
     def delete_project(project_id: str) -> dict[str, Any]:

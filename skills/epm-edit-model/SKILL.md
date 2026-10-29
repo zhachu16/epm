@@ -25,7 +25,8 @@ function and diagnostic.
 ## Workflow
 
 1. **Read before you write.** `get_project` (note `current_version`), then whatever the
-   change touches: `list_objects` to find names, `show` for definitions and values,
+   change touches: `list_objects` to find names, `show` for definitions and values
+   (`show(project_id, "settings")` for the settings: currency, default axis, key outputs),
    `trace` for what depends on what, `show_table` for statements. Never guess a name: an
    unknown name fails with `unknown_reference` and suggestions.
 2. **Note the starting point.** `validate` shows problems that were already there, so you
@@ -50,8 +51,10 @@ function and diagnostic.
   (`{"value": null, "formula": "..."}`).
 - **Add an input:** create a `value` metric with a `unit`, `folder` and, where useful, a
   `description`, then refer to it by name. Never put a new bare number in a formula.
-- **Rename:** use `rename`; every formula, table, check, analysis and circularity is
-  updated. Don't delete and recreate.
+- **Rename an object:** use `rename`; every formula, table, check, analysis and
+  circularity is updated. Don't delete and recreate.
+- **Rename the model:** `rename_project(project_id, name=...)`. The project's name is the
+  model's name (`settings.name`); changing either renames both and saves a version.
 - **Delete:** `trace` the object `downstream` first. A delete fails while anything uses
   it, which is a safeguard, not something to work around.
 - **Keep the model's style:** its units, folder names and naming pattern.

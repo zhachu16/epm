@@ -151,3 +151,8 @@ def test_mcp_over_http_shares_projects_with_the_api():
     finally:
         server.should_exit = True
         thread.join(10)
+
+
+def test_get_project_links_to_the_web_app(projects):
+    [shown] = call(build_mcp(projects), [("get_project", {"project_id": EXAMPLE_ID})])
+    assert payload(shown)["web_url"] == f"https://epm-alpha.nommo.cloud/p/{EXAMPLE_ID}"

@@ -28,7 +28,9 @@ function and diagnostic. Read it before writing formulas you are unsure of.
 ## Workflow
 
 1. **Create the project.** `create_project(name, description)` returns its `project_id`;
-   use it in every later call. Tell the user the ID.
+   use it in every later call. Tell the user the ID. The name you give is the model's name
+   everywhere (the project list, the web app and the model's own `settings.name`), so choose
+   it now; there is no need to set `settings.name` in a batch.
 2. **Build in layers, one batch per layer**, in this order, because later layers refer to
    earlier ones:
    1. settings and the axis (`default_axis`, currency, the years and which are historical);
@@ -48,10 +50,13 @@ function and diagnostic. Read it before writing formulas you are unsure of.
    signs, magnitudes and growth; a model that runs isn't necessarily right.
 6. **Report**: the `project_id`, what the model contains, the key outputs with their
    values, the assumptions you made, and that every batch is a version the user can roll back.
-   `get_project` gives the web link when one is configured.
+   `get_project` returns `web_url`, the project's page in the web app: give it to the user.
 
 ## Modelling conventions
 
+- **One name.** The project's name is the model's name. To change it, use
+  `rename_project`, or set `settings.name` in a batch; either renames both and saves a
+  version.
 - **Name every number.** `revenue * 0.22` hides an assumption; `revenue * ebitda_margin`
   exposes it to the user and to sensitivities. The only bare numbers in formulas are
   structural ones such as `1 +` or `/ 2`.
@@ -82,7 +87,7 @@ Settings and the axis (no historical years here):
 {
   "label": "Set up the model",
   "ops": [
-    {"op": "update", "kind": "settings", "set": {"name": "Acme DCF", "currency": "USD", "default_axis": "fy"}},
+    {"op": "update", "kind": "settings", "set": {"currency": "USD", "default_axis": "fy"}},
     {"op": "create", "kind": "axis", "name": "fy", "def": {"values": [2026, 2027, 2028, 2029, 2030], "label": "Fiscal year"}}
   ]
 }
