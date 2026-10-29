@@ -189,11 +189,7 @@ class Session:
             run = ws.run()
             model = ws.model
             owner = {m: name for name, c in model.circularities.items() for m in c.metrics}
-            group_of: dict[str, str] = {}
-            for table_name, table in model.tables.items():
-                for row in table.rows:
-                    if row.metric and row.metric not in group_of:
-                        group_of[row.metric] = table_name
+            group_of = _graph_groups(model)
             metrics = {}
             for name, cm in engine.metrics.items():
                 d = cm.definition
@@ -206,7 +202,6 @@ class Session:
                     if d.history is not None
                     else "formula"
                 )
-                folder_group = d.folder.split("/")[0] if d.folder else "Other"
                 metrics[name] = {
                     "kind": kind,
                     "axis": engine.shape(name),
@@ -221,7 +216,7 @@ class Session:
                     "value": value_to_dict(run.values[name]) if name in run.values else None,
                     "fingerprint": engine.fingerprints.get(name),
                     "circularity": owner.get(name),
-                    "group": group_of.get(name, folder_group),
+                    "group": group_of[name],
                 }
             functions = [
                 {
@@ -261,3 +256,31 @@ class Session:
                 ],
             }
         return clean(payload)
+
+
+def _graph_groups(model) -> dict[str, str]:
+    """Group metrics for the graph by the table that shows them.
+
+    A metric in no table joins the table most of its folder's metrics are in, so a
+    statement's helper metrics sit with the statement; failing that, its top folder.
+    """
+    from collections import Counter
+
+    group_of: dict[str, str] = {}
+    for table_name, table in model.tables.items():
+        for row in table.rows:
+            if row.metric and row.metric in model.metrics and row.metric not in group_of:
+                group_of[row.metric] = table_name
+    votes: dict[str, Counter] = {}
+    for name, metric in model.metrics.items():
+        if metric.folder and name in group_of:
+            votes.setdefault(metric.folder, Counter())[group_of[name]] += 1
+    for name, metric in model.metrics.items():
+        if name in group_of:
+            continue
+        folder = metric.folder
+        if folder in votes:
+            group_of[name] = votes[folder].most_common(1)[0][0]
+        else:
+            group_of[name] = folder.split("/")[0] if folder else "Other"
+    return group_of
