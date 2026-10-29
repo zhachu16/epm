@@ -83,4 +83,6 @@ CI runs all of these. The end-to-end tests need the built UI and a Chromium for 
   except caches that are safe to lose (version archives, calculated values).
 - **Change `main`, not the deployment branches.** `local-app`, `web-frontend` and
   `web-backend` are rebuilt from `main` after CI passes; edits made on them are overwritten.
+  Their READMEs are `scripts/branch-readmes/<branch>.md`; the local-app one is tested like
+  `README.md`.
 - **Style.** Ruff with a line length of 100. Comments explain why, not what.

@@ -3,22 +3,49 @@
 A financial modelling engine where models are built from **named metrics and formulas**
 instead of cell references, evaluated with pandas. Each quantity is defined once. Tables,
 analyses and checks refer to it by name. Agents and people edit models through the same
-structured operations, from the web UI, the `fm` CLI or the Python API.
+structured operations: the web UI, the `fm` CLI, the Python API, HTTP or MCP.
 
-See [`docs/PLAN.md`](docs/PLAN.md) for the full design and milestones.
+epm runs two ways. **Locally**, `fm` and `fm serve` work on a model on your disk. **Hosted**,
+a service keeps projects with versions in the cloud and serves them to a web app and to
+agents over MCP. Both use the same engine.
+
+## What's in this repository
+
+| Path | What |
+| --- | --- |
+| [`epm/`](epm) | The engine: formulas, evaluation, editing operations, the `fm` CLI and `fm serve`. |
+| [`frontend-local/`](frontend-local) | The local app's UI, served by `fm serve`. |
+| [`service/`](service) | The hosted service: projects in Supabase and R2, an HTTP API and an MCP endpoint. |
+| [`frontend-web/`](frontend-web) | The hosted web app. |
+| [`examples/lbo/`](examples/lbo) | A complete sample LBO, checked against an independent calculation. |
+| [`docs/`](docs) | The [agent guide](docs/agent-guide.md), the [user guide](docs/user-guide.md) for the hosted version, [deployment](docs/deployment.md) and the [design](docs/PLAN.md). |
+
+## Branches
+
+| Branch | Holds | Used for |
+| --- | --- | --- |
+| `main` | Everything | All development. Make every change here. |
+| `local-app` | The engine, `fm`, `fm serve` and its UI | Installing and running epm locally |
+| `web-backend` | The engine and the service | Render deploys it as a Docker service |
+| `web-frontend` | The web app | Vercel deploys it |
+
+The last three are generated from `main` by [`scripts/split-branches.sh`](scripts/split-branches.sh)
+after CI passes, each with a README of its own. Don't edit them: the next update overwrites
+what is there. See [deployment](docs/deployment.md).
 
 ## Status
 
-All milestones (M0–M12) are done: the engine, sources, solver, archives and cache, editing
+All milestones (M0–M19) are done: the engine, sources, solver, archives and cache, editing
 operations, custom functions, sweeps and analyses, the `fm` CLI, a complete sample LBO, the
-`fm serve` session server, the web UI, and a performance pass. A 1,000-scenario sweep of the
-sample LBO takes a few seconds; `python benchmarks/run.py` measures it.
+`fm serve` session server and its UI, a performance pass, and the hosted service with its
+web app, docs and deployment. A 1,000-scenario sweep of the sample LBO takes a few seconds;
+`python benchmarks/run.py` measures it. The hosted version is an **open alpha**: no
+sign-in yet.
 
 **Agents** building or changing models should start with the
-[agent guide](docs/agent-guide.md). The hosted version, with projects, versions, an HTTP
-API and an MCP endpoint, is described in the [user guide](docs/user-guide.md), and
-[deploying it](docs/deployment.md) on Render and Vercel. People working on epm itself:
-see [`AGENTS.md`](AGENTS.md).
+[agent guide](docs/agent-guide.md); on the hosted version, the [user guide](docs/user-guide.md)
+covers projects, versions, the HTTP API and MCP. People working on epm itself: see
+[`AGENTS.md`](AGENTS.md).
 
 ## Quick start
 
@@ -56,7 +83,7 @@ fm -m examples/lbo trace ebit --upstream
 
 Add `--json` to any command for a `{ok, data, errors, warnings}` envelope.
 
-## Web UI
+## Local web UI
 
 The local UI lives in [`frontend-local/`](frontend-local), a standalone Vite + React app. Build it once:
 
@@ -215,3 +242,21 @@ A `.epm` file is an ordinary ZIP archive:
 
 Archives are written atomically and deterministically. The same layout works unpacked in a
 directory; `fm pack` and `fm unpack` convert between the two.
+
+## Hosted version
+
+The service in [`service/`](service) and the web app in [`frontend-web/`](frontend-web)
+host the same models as projects, with every saved change kept as a version. Try both on
+your machine with in-memory storage:
+
+```text
+pip install ".[plot]" -r service/requirements.txt
+python -m service.service --memory
+```
+
+```text
+cd frontend-web && npm ci && npm run dev
+```
+
+The [user guide](docs/user-guide.md) covers the web app, the HTTP API and MCP;
+[deployment](docs/deployment.md) covers Supabase, R2, Render and Vercel.

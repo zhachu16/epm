@@ -5,6 +5,8 @@
 #   web-frontend  frontend-web, deployed by Vercel
 #   web-backend   epm and service/, deployed by Render (render.yaml)
 #
+# Each branch gets its own README.md, from scripts/branch-readmes/<branch>.md.
+#
 # main stays the one place where changes are made; these branches are generated, never
 # edited. Each run adds a commit on top of a branch (no force-push) when its files changed.
 #
@@ -16,9 +18,9 @@ remote=${REMOTE:-origin}
 push=${PUSH:-1}
 
 declare -A KEEP=(
-  [local-app]="epm frontend-local examples tests benchmarks docs README.md AGENTS.md CLAUDE.md pyproject.toml .gitignore"
-  [web-frontend]="frontend-web docs README.md .gitignore"
-  [web-backend]="epm service examples docs pyproject.toml README.md render.yaml .dockerignore .gitignore"
+  [local-app]="epm frontend-local examples tests benchmarks docs AGENTS.md CLAUDE.md pyproject.toml .gitignore"
+  [web-frontend]="frontend-web docs .gitignore"
+  [web-backend]="epm service examples docs pyproject.toml render.yaml .dockerignore .gitignore"
 )
 
 source_sha=$(git rev-parse --verify "$source_ref^{commit}")
@@ -31,6 +33,8 @@ for branch in local-app web-frontend web-backend; do
   rm -f "$index"
   git ls-tree -r --full-tree "$source_sha" -- "${paths[@]}" \
     | GIT_INDEX_FILE=$index git update-index --index-info
+  readme=$(git rev-parse "$source_sha:scripts/branch-readmes/$branch.md")
+  GIT_INDEX_FILE=$index git update-index --add --cacheinfo "100644,$readme,README.md"
   tree=$(GIT_INDEX_FILE=$index git write-tree)
 
   parent=$(git rev-parse -q --verify "refs/remotes/$remote/$branch" || true)
