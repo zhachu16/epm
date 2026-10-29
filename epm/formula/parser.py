@@ -50,7 +50,7 @@ _FRIENDLY: dict[type, str] = {
 }
 
 
-@lru_cache(maxsize=4096)
+@lru_cache(maxsize=32_768)  # every edit re-parses the whole model
 def parse_formula(text: str, functions: frozenset[str] = frozenset()) -> Node:
     """Parse ``text`` into IR, raising :class:`FormulaError` on anything not allowed.
 

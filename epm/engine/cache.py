@@ -60,6 +60,14 @@ class ValueCache:
     def clear(self) -> None:
         self._entries.clear()
 
+    def overlay(self, max_entries: int = 20_000) -> ValueCache:
+        """A cache that reads this one but keeps its own additions to itself.
+
+        Sweeps use it so their scenarios reuse the model's cached steps without filling the
+        shared cache with results nobody will ask for again.
+        """
+        return _Overlay(self, max_entries)
+
     # -- persistence -------------------------------------------------------------------
 
     def dump(self, keys: list[str]) -> dict[str, bytes]:
@@ -162,3 +170,16 @@ def _restore(step: dict, frames: dict[str, pd.DataFrame], axes: dict[str, pd.Ind
         for k, v in step.get("solver", {}).items()
     }
     return StepEntry(values, status, diagnostics, solver)
+
+
+class _Overlay(ValueCache):
+    def __init__(self, base: ValueCache, max_entries: int):
+        super().__init__(max_entries)
+        self._base = base
+
+    def __contains__(self, key: str) -> bool:
+        return super().__contains__(key) or key in self._base
+
+    def get(self, key: str) -> StepEntry | None:
+        entry = super().get(key)
+        return entry if entry is not None else self._base.get(key)

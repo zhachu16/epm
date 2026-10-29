@@ -3,16 +3,20 @@
 A financial modelling engine where models are built from **named metrics and formulas**
 instead of cell references, evaluated with pandas. Each quantity is defined once. Tables,
 analyses and checks refer to it by name. Agents and people edit models through the same
-structured operations, from the `fm` CLI or the Python API.
+structured operations, from the web UI, the `fm` CLI or the Python API.
 
 See [`docs/PLAN.md`](docs/PLAN.md) for the full design and milestones.
 
 ## Status
 
-Milestones M0–M11 are done: the engine, sources, solver, archives and cache, editing
+All milestones (M0–M12) are done: the engine, sources, solver, archives and cache, editing
 operations, custom functions, sweeps and analyses, the `fm` CLI, a complete sample LBO, the
-`fm serve` session server and the web UI. Next is hardening (M12): performance, docs and an
-agent guide.
+`fm serve` session server, the web UI, and a performance pass. A 1,000-scenario sweep of the
+sample LBO takes a few seconds; `python benchmarks/run.py` measures it.
+
+**Agents** building or changing models should start with the
+[agent guide](docs/agent-guide.md). People working on epm itself: see
+[`AGENTS.md`](AGENTS.md).
 
 ## Quick start
 
@@ -137,6 +141,8 @@ amortization_schedule(tlb_amount, tlb_amortization_pct, is_forecast())   # custo
 | Finance | `irr`, `npv` |
 | Axis | `is_forecast()`, `is_historical()`, `period()`, `period_index()` |
 
+`fm list builtins` prints every function with its signature and a description.
+
 - **Axes.** Scalars broadcast across a metric's axis, and axes are inferred from formulas
   when they aren't declared.
 - **Recurrences.** A loop that passes through `prev()` is evaluated one period at a time.
@@ -155,18 +161,20 @@ amortization_schedule(tlb_amount, tlb_amortization_pct, is_forecast())   # custo
 ## Sources and history
 
 ```json
-"sources": {
-  "is":   { "file": "inputs/historicals.xlsx", "sheet": "IS", "range": "A1:H40" },
-  "ops":  { "file": "inputs/ops.csv", "orientation": "columns" }
-},
-"metrics": {
-  "revenue": {
-    "unit": "USD m",
-    "history": { "source": "is", "item": "Revenue" },
-    "formula": "prev(revenue) * (1 + revenue_growth)"
+{
+  "sources": {
+    "is":  { "file": "inputs/historicals.xlsx", "sheet": "IS", "range": "A1:H40" },
+    "ops": { "file": "inputs/ops.csv", "orientation": "columns" }
   },
-  "volume":         { "input": { "source": "ops", "item": "volume" } },
-  "entry_multiple": { "unit": "x", "input": { "source": "is", "cell": "Deal!B4" } }
+  "metrics": {
+    "revenue": {
+      "unit": "USD m",
+      "history": { "source": "is", "item": "Revenue" },
+      "formula": "prev(revenue) * (1 + revenue_growth)"
+    },
+    "volume":         { "input": { "source": "ops", "item": "volume" } },
+    "entry_multiple": { "unit": "x", "input": { "source": "is", "cell": "Deal!B4" } }
+  }
 }
 ```
 

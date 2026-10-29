@@ -223,6 +223,20 @@ def test_close_after_the_worker_died():
     rt.close()
 
 
+def test_prestarted_workers_finish_loading_on_the_first_call():
+    rt = FunctionRuntime(SOURCE)
+    try:
+        rt.prestart()
+        rt.prestart()  # already started: no second worker
+        assert rt.call("moic", [100.0, 300.0], {}) == 3.0 and rt.calls == 1
+    finally:
+        rt.close()
+    broken = FunctionRuntime("raise RuntimeError('boom')\n")
+    broken.prestart()
+    with pytest.raises(FunctionCallError, match="failed to load: RuntimeError: boom"):
+        broken.call("x", [], {})
+
+
 def test_load_errors_are_reported():
     rt = FunctionRuntime("raise RuntimeError('boom')\n")
     with pytest.raises(FunctionCallError, match="failed to load: RuntimeError: boom"):

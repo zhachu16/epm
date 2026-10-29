@@ -19,6 +19,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +43,7 @@ from ..formula.analysis import custom_calls, scope_start
 from ..formula.builtins import BUILTINS
 from ..formula.compiler import Evaluator
 from ..formula.ir import Node
+from ..formula.point import Binder, Frame, compile_point
 from ..formula.shapes import Shape, describe, join
 from ..formula.units import ANY, CONFLICT, Unit, UnitIssue, infer_unit, unit_key
 from ..formula.units import join as join_units
@@ -72,6 +74,7 @@ class CompiledMetric:
     node: Node | None = None
     refs: dict[str, Lag] = field(default_factory=dict)
     evaluator: Evaluator | None = None
+    point: Binder | None = None  # period-by-period form, for recurrences
     constant: Any = None
     error: Diagnostic | None = None
 
@@ -121,6 +124,8 @@ class Engine:
         self.runtime = runtime
         if self.runtime is None and self.functions:
             self.runtime = FunctionRuntime(functions)  # type: ignore[arg-type]
+        if self.runtime is not None and self.functions:
+            self.runtime.prestart()  # loads while the sources are read
         self._causal = frozenset(n for n, f in self.functions.items() if f.causal)
         self.starts: dict[str, int] = {}  # filled by scope inference, read by compiled formulas
         self.axes = self._build_axes()
@@ -136,6 +141,7 @@ class Engine:
         self._validate_circularities()
         self.steps = self._plan()
         self.fingerprints: dict[str, str] = {}
+        self._own_hashes: dict[str, str] = {}
         self.step_keys = self._fingerprint_steps()
         self.checks = {name: self._prepare_check(name, c) for name, c in model.checks.items()}
         self._validate_tables()
@@ -588,7 +594,10 @@ class Engine:
                     ).encode()
                 )
             for m in step.members:  # order matters for Gauss-Seidel iteration
-                h.update(f"|{m}={self._own_hash(self.metrics[m])}".encode())
+                own = self._own_hashes.get(m)
+                if own is None:
+                    own = self._own_hashes[m] = self._own_hash(self.metrics[m])
+                h.update(f"|{m}={own}".encode())
             external = sorted({d for m in members for d in self.metrics[m].refs} - members)
             for d in external:
                 # a rejected loop's members read each other; they are errors either way
@@ -732,6 +741,24 @@ class Engine:
             runtime=self.runtime,
             sources=self.sources,
         )
+
+    def set_values(self, values: Mapping[str, float]) -> None:
+        """Change the values of scalar value metrics in place, keeping everything else.
+
+        Sweeps use this on an engine from :meth:`with_overrides` to run each scenario
+        without rebuilding and re-planning the model. Every name must already be a metric
+        with a single fixed value.
+        """
+        for name, raw in values.items():
+            cm = self.metrics[name]
+            if cm.kind != "value" or cm.error is not None or isinstance(cm.definition.value, dict):
+                raise ValueError(f"'{name}' is not a metric with a single fixed value")
+            cm.definition = cm.definition.model_copy(update={"value": float(raw)})
+            self.model.metrics[name] = cm.definition
+            cm.constant = self._mask(cm, self._broadcast(cm, np.float64(raw)))
+            self._own_hashes.pop(name, None)
+        self.fingerprints = {}
+        self.step_keys = self._fingerprint_steps()
 
     def run(
         self,
@@ -999,20 +1026,13 @@ class Engine:
         if not self._ready(members, status):
             return
         ax = self.axes[self.metrics[members[0]].shape]  # type: ignore[index]
-        arrays = {m: np.full(len(ax), np.nan) for m in members}
-
-        def store(m: str) -> None:
-            values[m] = pd.Series(arrays[m].copy(), index=ax.index, name=m)
-
-        def evaluate_at(m: str, t: int) -> float:
-            cm = self.metrics[m]
-            return float(self._broadcast(cm, cm.evaluator(values)).iloc[t])
-
+        current: dict[str, list[Any]] = {}
         for m in members:
             cm = self.metrics[m]
+            data = np.full(len(ax), np.nan)
             if cm.history is not None:
-                arrays[m][ax.historical] = cm.history[ax.historical]
-            store(m)
+                data[ax.historical] = cm.history[ax.historical]
+            current[m] = data.tolist()
         stats = {
             b.circularity: SolverStats(b.circularity, True, 0, 0.0, periods={})
             for b in step.blocks
@@ -1020,36 +1040,35 @@ class Engine:
         }
         t, m = 0, members[0]
         try:
+            frame = Frame(values, current, ax.index)
+            at = {m: self._point(m, step)(frame) for m in members}
             for t in range(len(ax)):
                 for block in step.blocks:
                     active = [x for x in block.members if self._computes_at(self.metrics[x], t, ax)]
                     if block.circularity is None:
                         for m in active:
-                            arrays[m][t] = evaluate_at(m, t)
-                            store(m)
+                            current[m][t] = float(at[m](t))
                         continue
                     circ = self.model.circularities[block.circularity]
                     for m in active:  # warm start from the previous period's solution
-                        last = arrays[m][t - 1] if t else np.nan
-                        arrays[m][t] = last if np.isfinite(last) else circ.seed
-                        store(m)
-                    residual = np.inf
+                        last = current[m][t - 1] if t else math.nan
+                        current[m][t] = last if math.isfinite(last) else circ.seed
+                    residual = math.inf
                     for iterations in range(1, circ.max_iter + 1):  # noqa: B007
                         residual = 0.0
                         for m in active:
-                            old = arrays[m][t]
-                            new = evaluate_at(m, t)
+                            old = current[m][t]
+                            new = float(at[m](t))
                             if circ.damping < 1:
                                 new = old + circ.damping * (new - old)
-                            if np.isinf(new):
+                            if math.isinf(new):
                                 raise SolverError(
                                     f"'{m}' became infinite at {ax.name}={ax.index[t]}"
                                 )
                             change = abs(new - old)
                             if change > residual:
                                 residual = change
-                            arrays[m][t] = new
-                            store(m)
+                            current[m][t] = new
                         if residual <= circ.tol:
                             break
                     else:
@@ -1071,6 +1090,8 @@ class Engine:
                 code = "calc_error"
             self._group_failed(members, message, code, values, status, diagnostics)
             return
+        for m in members:
+            values[m] = pd.Series(np.array(current[m], dtype=float), index=ax.index, name=m)
         solver.update(stats)
         owner = {x: b.circularity for b in step.blocks for x in b.members if b.circularity}
         for m in members:
@@ -1079,6 +1100,14 @@ class Engine:
                 status[m] = self._solved_status(m, owner[m], it, values, status, diagnostics)
             else:
                 status[m] = self._value_status(self.metrics[m], values[m], status, diagnostics)
+
+    def _point(self, name: str, step: Step) -> Binder:
+        """The metric's formula compiled for period-by-period evaluation in ``step``."""
+        cm = self.metrics[name]
+        if cm.point is None:
+            env = self._env(cm.declared_axis)
+            cm.point = compile_point(cm.node, env, frozenset(step.members))  # type: ignore[arg-type]
+        return cm.point
 
     def _solved_status(self, m, name, iterations, values, status, diagnostics) -> MetricStatus:
         result = self._value_status(self.metrics[m], values[m], status, diagnostics)

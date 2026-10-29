@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 from typing import Any
 
@@ -56,9 +57,16 @@ def number(v: Any, unit: str | None = None) -> str:
     return f"{f:.4g}"
 
 
+_NUMERIC = re.compile(r"^[-+]?[\d,]*\.?\d+(e[-+]?\d+)?[%x]?$|^[-—]?$", re.IGNORECASE)
+
+
 def table(rows: list[list[Any]], headers: list[str] | None = None) -> str:
-    """Align columns; the first column is left-aligned, the rest right-aligned."""
+    """Align columns: numbers to the right, text (and the first column) to the left."""
     data = [[str(c) for c in r] for r in rows]
+    ncols = max(map(len, data), default=0)
+    numeric = [
+        i > 0 and all(_NUMERIC.match(r[i]) for r in data if i < len(r)) for i in range(ncols)
+    ]
     if headers:
         data.insert(0, headers)
     if not data:
@@ -66,7 +74,10 @@ def table(rows: list[list[Any]], headers: list[str] | None = None) -> str:
     widths = [max(len(r[i]) for r in data if i < len(r)) for i in range(max(map(len, data)))]
     lines = []
     for n, r in enumerate(data):
-        cells = [c.ljust(widths[i]) if i == 0 else c.rjust(widths[i]) for i, c in enumerate(r)]
+        cells = [
+            c.rjust(widths[i]) if i < len(numeric) and numeric[i] else c.ljust(widths[i])
+            for i, c in enumerate(r)
+        ]
         lines.append("  ".join(cells).rstrip())
         if headers and n == 0:
             lines.append("  ".join("-" * w for w in widths))

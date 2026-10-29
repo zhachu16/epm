@@ -59,9 +59,16 @@ class FunctionRuntime:
         self.calls = 0  # calls that reached the worker
         self._proc: subprocess.Popen | None = None
         self._channel: Channel | None = None
+        self._loaded = False  # the worker has confirmed that functions.py loaded
         _RUNTIMES.add(self)
 
-    def _start(self) -> None:
+    def prestart(self) -> None:
+        """Start the worker now, in the background, so the first call need not wait for it."""
+        if self._proc is None:
+            with contextlib.suppress(OSError):
+                self._spawn()
+
+    def _spawn(self) -> None:
         env = {**os.environ, "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"}
         # -I: isolated mode, so the current directory and user site-packages are not on
         # sys.path and a stray module there cannot shadow anything the worker imports
@@ -72,15 +79,21 @@ class FunctionRuntime:
             env=env,
             cwd=tempfile.gettempdir(),
         )
-        channel = Channel(proc.stdout, proc.stdin)
-        self._proc, self._channel = proc, channel
+        self._proc, self._channel = proc, Channel(proc.stdout, proc.stdin)
+        self._loaded = False
+        self._channel.send(("init", self.source, self.limits.memory_mb, self.limits.cpu_seconds))
+
+    def _start(self) -> None:
+        """Start the worker if needed, then wait until functions.py has loaded."""
         try:
-            channel.send(("init", self.source, self.limits.memory_mb, self.limits.cpu_seconds))
+            if self._proc is None:
+                self._spawn()
+            assert self._channel is not None
             if not self._ready(self.limits.startup_timeout):
                 raise FunctionCallError("startup_timeout", "the function worker did not start")
-            kind, payload = channel.recv()
+            kind, payload = self._channel.recv()
         except (EOFError, BrokenPipeError, OSError):
-            code = proc.wait(5)
+            code = self._proc.wait(5) if self._proc is not None else None
             self._kill()
             raise FunctionCallError(
                 "load_error", f"the function worker exited while loading (code {code})"
@@ -91,6 +104,7 @@ class FunctionRuntime:
         if kind == "load_error":
             self._kill()
             raise FunctionCallError("load_error", f"functions.py failed to load: {payload}")
+        self._loaded = True
 
     def _ready(self, timeout: float) -> bool:
         assert self._proc is not None and self._proc.stdout is not None
@@ -129,8 +143,9 @@ class FunctionRuntime:
         return result
 
     def _call(self, name: str, args: list[Any], kwargs: dict[str, Any]) -> Any:
-        if self._proc is None or self._proc.poll() is not None:
+        if self._proc is not None and self._proc.poll() is not None:
             self._kill()
+        if self._proc is None or not self._loaded:
             self._start()
         assert self._channel is not None and self._proc is not None
         self.calls += 1

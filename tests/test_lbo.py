@@ -228,3 +228,33 @@ def test_spec_cli_examples(tmp_path, monkeypatch):
     assert code == 0 and data["data"]["chart"]["kind"] == "line"
     data, code = fm("metric", "delete", "tax_rate")
     assert code == 1 and data["errors"][0]["code"] == "in_use"
+
+
+def test_sweeps_share_one_engine_and_match_full_runs(workspace, monkeypatch):
+    """Scenarios reuse one overridden engine and leave the shared cache as it was."""
+    from epm.engine import Engine
+
+    workspace.run()
+    cached = len(workspace.cache)
+    built = []
+    init = Engine.__init__
+
+    def counting_init(self, *args, **kwargs):
+        built.append(self)
+        init(self, *args, **kwargs)
+
+    monkeypatch.setattr(Engine, "__init__", counting_init)
+    outputs = ["equity_irr", "moic", "tlb_close@2027"]
+    sweep = workspace.sweep(
+        {"interest_rate": list(np.linspace(0.03, 0.09, 40)), "tlb_leverage": [3.0, 3.5, 4.0]},
+        outputs,
+    )
+    monkeypatch.undo()
+    assert sweep.ok and len(sweep.rows) == 120
+    assert len(built) == 1
+    assert len(workspace.cache) == cached
+    for row in sweep.rows[::23]:
+        run = workspace.engine.run(row["inputs"], outputs=["equity_irr", "moic", "tlb_close"])
+        assert row["outputs"]["equity_irr"] == run["equity_irr"]
+        assert row["outputs"]["moic"] == run["moic"]
+        assert row["outputs"]["tlb_close@2027"] == run["tlb_close"].loc[2027]

@@ -379,7 +379,7 @@ A standalone Vite + React + TypeScript app in `frontend/`, served by `fm serve` 
 | M9 | FastAPI server as the session owner (undo, pending), CLI-to-server routing via lock file, websocket events, file watcher, terminal endpoint | done |
 | M10 | Vite app scaffold, UI shell, explorer, graph view, inspector | done |
 | M11 | Editors (metric, table, source, function, JSON), analyses UI, Changes panel, terminal, Playwright end-to-end tests | done |
-| M12 | Hardening: performance pass (sweeps of 1k scenarios), docs, agent guide | next |
+| M12 | Hardening: performance pass (sweeps of 1k scenarios), docs, agent guide | done |
 
 The backend (M0–M9) is usable headless by agents before any UI work starts.
 
@@ -415,11 +415,39 @@ The backend (M0–M9) is usable headless by agents before any UI work starts.
 - **Monaco.** Bundled locally with only the editor core, Python and JSON, since the UI runs
   offline next to the model.
 
+### Notes from M12
+
+Timings from `python benchmarks/run.py` on the sample LBO, per 1,024-scenario sweep:
+
+| Sweep | Before | After |
+| --- | --- | --- |
+| Entry × exit multiples (debt schedule reused) | 6.7 s | 1.6 s |
+| Interest rates (circular debt schedule re-solved each time) | about 125 s | 4.4 s |
+
+Edits preview and commit in about 25 ms. A synthetic model of 10,000 metrics builds in about
+1 s and runs in about 2 s.
+
+- **Period-by-period evaluation.** Recurrences used to evaluate each formula over the whole
+  series at every period and solver iteration, then keep one value. `formula/point.py`
+  instead evaluates the parts of a formula that read the recurrence's own metrics at one
+  position with Python floats. Parts that don't are evaluated once per run over the whole
+  series, and custom functions fall back to whole-series evaluation. Anything beyond plain
+  float arithmetic goes through numpy scalars, so the results match exactly;
+  `tests/test_point.py` checks this on zeros, signed zeros, NaN and infinities.
+- **One engine per sweep.** Every scenario of a sweep overrides the same metrics, so a sweep
+  builds one overridden engine and changes only the values between scenarios
+  (`Engine.set_values`). Fingerprints are recomputed from cached per-metric hashes.
+- **Sweep caching.** Sweeps read the shared value cache through an overlay that keeps their
+  own results, so a large sweep reuses the model's cached steps without evicting them.
+- **Worker start.** The function worker starts loading `functions.py` when the engine is
+  built, so its startup overlaps with reading sources.
+- **Docs are executable.** `tests/test_docs.py` runs every batch, command and Python
+  example in the README and the [agent guide](agent-guide.md).
+
 ## 12. Risks
 
-- **Recurrence speed.** Period stepping is slower than vectorized evaluation. Mitigations: the
-  cumsum rewrite, keeping each step in numpy scalars, and only a few periods per model (about
-  10–40).
+- **Recurrence speed.** Period stepping is slower than vectorized evaluation. Mitigated by
+  scalar point evaluation (see the M12 notes), and models have few periods (about 10–40).
 - **Sandbox limits.** `setrlimit` is Unix-only, and Python-level sandboxing is not a security
   boundary. Treat `functions.py` as trusted-by-the-user code with resource limits, not as an
   untrusted-code sandbox. Document this clearly.

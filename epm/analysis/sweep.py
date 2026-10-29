@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+import numpy as np
 import pandas as pd
 
 from ..engine import Engine
@@ -55,6 +56,10 @@ def _number(v: Any) -> float | None:
     return f if math.isfinite(f) else None
 
 
+def _scalar(v: Any) -> bool:
+    return isinstance(v, int | float | np.number) and not isinstance(v, bool | np.bool_)
+
+
 def scenarios(inputs: Mapping[str, Sequence[float]], mode: Mode) -> list[dict[str, float]]:
     names = list(inputs)
     lists = [list(inputs[n]) for n in names]
@@ -97,6 +102,14 @@ def sweep(
         )
     needed = list(dict.fromkeys(m for m, _ in selectors))
     result = SweepResult(list(inputs), list(outputs), mode)
+    local = cache.overlay() if cache is not None else ValueCache()
+    base = dict(overrides or {})
+    # Scenarios with scalar inputs share one overridden engine; only the values change.
+    shared = (
+        engine.with_overrides({**base, **cases[0]})
+        if cases and all(_scalar(v) for case in cases for v in case.values())
+        else None
+    )
     for case in cases:
         row: dict[str, Any] = {
             "inputs": dict(case),
@@ -105,9 +118,11 @@ def sweep(
             "error": None,
         }
         try:
-            run = engine.run(
-                {**(overrides or {}), **case}, outputs=needed, checks=False, cache=cache
-            )
+            if shared is not None:
+                shared.set_values(case)
+                run = shared.run(outputs=needed, checks=False, cache=local)
+            else:
+                run = engine.run({**base, **case}, outputs=needed, checks=False, cache=local)
         except EpmError as e:
             row.update(status="error", error=e.message)
             result.rows.append(row)

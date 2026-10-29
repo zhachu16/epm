@@ -121,7 +121,8 @@ def _coerce(spec, result: Any, inputs: list[Any], env: FormulaEnv) -> Any:
     return pd.Series(data, index=axis.index)
 
 
-def _compile_call(call: Call, env: FormulaEnv) -> Evaluator:
+def with_start(call: Call, env: FormulaEnv) -> Call:
+    """Record where the argument of a scope-aware built-in starts (see ``builtins.start``)."""
     builtin = BUILTINS[call.func]
     if builtin.start_param is not None and env.starts:
         key = builtin.start_param
@@ -130,6 +131,12 @@ def _compile_call(call: Call, env: FormulaEnv) -> Evaluator:
         if s:
             # parsed calls are shared between metrics, so annotate a copy
             call = dataclasses.replace(call, literals={**call.literals, "_start": s})
+    return call
+
+
+def _compile_call(call: Call, env: FormulaEnv) -> Evaluator:
+    builtin = BUILTINS[call.func]
+    call = with_start(call, env)
     arg_fns = {k: compile_formula(v, env) for k, v in call.args.items()}
     var_fns = [compile_formula(v, env) for v in call.varargs]
 

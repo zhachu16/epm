@@ -17,6 +17,7 @@ import pandas as pd
 import typer
 
 from ..errors import EpmError
+from ..formula.builtins import BUILTINS
 from ..model import Model, Settings
 from ..package import EXTENSION, pack, unpack
 from ..workspace import BatchResult, Workspace
@@ -299,7 +300,7 @@ def list_objects(
         str,
         typer.Argument(
             help="metrics, inputs, axes, sources, functions, tables, checks, "
-            "circularities, analyses or files"
+            "circularities, analyses, files, or builtins (the formula functions)"
         ),
     ] = "metrics",
     folder: Annotated[str | None, typer.Option(help="Only objects in this folder.")] = None,
@@ -307,16 +308,20 @@ def list_objects(
         str | None, typer.Option(help="Substring of name, folder or description.")
     ] = None,
 ) -> None:
-    """List model objects."""
+    """List model objects, or the built-in formula functions."""
     state: State = ctx.obj
-    ws = state.workspace()
     rows: list[dict[str, Any]] = []
-    if kind == "functions":
+    if kind == "builtins":  # needs no model
+        rows = [{"name": n, "signature": b.signature, "doc": b.doc} for n, b in BUILTINS.items()]
+    elif kind == "functions":
+        ws = state.workspace()
         for name, spec in ws.engine.functions.items():
             rows.append({"name": name, "signature": spec.signature, "returns": spec.returns})
     elif kind == "files":
+        ws = state.workspace()
         rows = [{"name": p, "bytes": len(b)} for p, b in sorted(ws.inputs.items())]
     elif kind in KINDS:
+        ws = state.workspace()
         items = getattr(ws.model, KINDS[kind])
         for name, obj in items.items():
             if kind == "inputs" and obj.formula is not None:
@@ -344,11 +349,8 @@ def list_objects(
         rows = [r for r in rows if r.get("folder") == folder]
     if search:
         q = search.lower()
-        rows = [
-            r
-            for r in rows
-            if any(q in str(r.get(k) or "").lower() for k in ("name", "folder", "description"))
-        ]
+        fields = ("name", "folder", "description", "doc")
+        rows = [r for r in rows if any(q in str(r.get(k) or "").lower() for k in fields)]
     columns = [k for k in rows[0] if k != "description"] if rows else ["name"]
     text = (
         table([[("" if r.get(c) is None else r.get(c)) for c in columns] for r in rows], columns)

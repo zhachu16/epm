@@ -151,3 +151,11 @@ def test_analysis_validation(ws):
                 }
             }
         )
+
+
+def test_set_values_only_changes_fixed_values(ws):
+    engine = ws.engine.with_overrides({"interest_rate": 0.05})
+    engine.set_values({"interest_rate": 0.09})
+    assert engine.run(outputs=["interest_rate"])["interest_rate"] == 0.09
+    with pytest.raises(ValueError, match="single fixed value"):
+        engine.set_values({"cumulative_fcf": 1.0})
