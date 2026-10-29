@@ -35,7 +35,7 @@ class Diagnostic:
         return out
 
 
-class FmError(Exception):
+class EpmError(Exception):
     """Misuse of the API, e.g. asking for an output that does not exist."""
 
     def __init__(self, code: str, message: str, **detail: Any):
@@ -45,7 +45,7 @@ class FmError(Exception):
         self.detail = detail
 
 
-class FormulaError(FmError):
+class FormulaError(EpmError):
     """A formula that cannot be parsed, bound or shape-checked."""
 
     def __init__(self, code: str, message: str, col: int | None = None, **detail: Any):

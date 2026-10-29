@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fm import Engine, load_model
+from epm import Engine, load_model
 
 FIXTURE = Path(__file__).parent / "fixtures" / "three_statement.json"
 YEARS = [2025, 2026, 2027, 2028, 2029, 2030]

@@ -1,13 +1,13 @@
-"""fm: financial models built from named metrics and formulas, evaluated with pandas."""
+"""epm: financial models built from named metrics and formulas, evaluated with pandas."""
 
 from .engine import Engine, RunResult
-from .errors import Diagnostic, FmError, FormulaError
+from .errors import Diagnostic, EpmError, FormulaError
 from .model import Model, dump_model, load_model
 
 __all__ = [
     "Diagnostic",
     "Engine",
-    "FmError",
+    "EpmError",
     "FormulaError",
     "Model",
     "RunResult",

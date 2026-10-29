@@ -1,4 +1,4 @@
-# fm — Implementation Plan
+# epm — Implementation Plan
 
 An AI-native alternative to Excel for financial modelling. Models are named quantities with
 formulas, evaluated by a pandas engine, edited through an IDE-style local web app, a CLI (`fm`),
@@ -20,7 +20,7 @@ and a structured API that agents can drive.
 ## Repository layout
 
 ```text
-fm/                     Python package
+epm/                    Python package
   model/                pydantic schemas for every object kind, and model.json I/O
   formula/              parser, whitelist, AST → dependency extraction, compiler
   engine/               graph, SCC/topological ordering, evaluator, solver, cache
@@ -60,15 +60,17 @@ A sketch of `model.json`:
   },
   "sources": {
     "historicals": { "file": "inputs/historicals.xlsx", "sheet": "IS", "range": "A1:J40",
-                     "index": { "column": "A" }, "axis": "fy", "orientation": "rows" }
+                     "orientation": "rows", "axis": "fy" },
+    "deal": { "file": "inputs/historicals.xlsx", "sheet": "Deal" }
   },
   "metrics": {
     "revenue": {
       "axis": "fy", "unit": "USD m", "folder": "Income Statement",
-      "history": { "source": "historicals", "row": "Revenue" },
+      "history": { "source": "historicals", "item": "Revenue" },
       "formula": "prev(revenue) * (1 + revenue_growth)"
     },
     "revenue_growth": { "unit": "%", "value": 0.05, "folder": "Assumptions" },
+    "entry_multiple": { "unit": "x", "input": { "source": "deal", "cell": "B4" } },
     "interest_expense": {
       "axis": "fy", "unit": "USD m",
       "formula": "interest_rate * (prev(debt_close, init=opening_debt) + debt_close) / 2"
@@ -96,6 +98,18 @@ Notes:
 - **Metric kinds.** A metric is defined by exactly one of: `value` (a scalar or a per-period
   mapping), `input` (a source binding), or `formula`. As an LBO convenience, a period-axis
   metric may combine a `history` binding with a `formula` that applies to forecast periods only.
+- **Sources.** `orientation: "rows"` (financial-statement layout) treats each row as a series.
+  The `index` row (a row number) holds axis labels and the `labels` column (a letter) holds
+  item names. `orientation: "columns"` (tabular layout) is the transpose: the `index` column
+  holds axis labels and the `labels` row holds headers. Both default to the first row and
+  column of `range`, which defaults to the whole sheet.
+  - Bindings pick a series by `item`, or one value by `cell` (`"B4"` or `"Deal!B4"`), with an
+    optional `scale`.
+  - Text cells accept thousands separators, currency symbols, `(123)` negatives and `%`. A
+    lone dash is zero; `n/a` and blanks are missing.
+  - Labels match axis values by text (`2024.0` matches `2024`). Source labels that aren't on
+    the axis are ignored and reported as info.
+  - XLSX formulas use Excel's saved values. A formula cell with no saved value is a warning.
 - **Organization.** `folder` (and optional `tags`) drive the explorer tree. Everything still
   lives in one JSON file.
 - **Writes.** The archive is written atomically: write a temp file, fsync, rename. Key order and
@@ -122,8 +136,11 @@ Formulas are Python expressions validated against a whitelist:
   scalars. Scalars broadcast to the axis. Mixing different axes is a validation error unless a
   reduction is applied.
 - **Units.** Units are lightweight tags such as `USD m`, `%`, `x`, `count` and `years`. `+`,
-  `-` and comparisons between different units produce a warning, or an error in strict mode.
-  `*` and `/` are unchecked in v1 but displayed.
+  `-`, comparisons, and functions that combine like values (`where` branches, `min`/`max`,
+  `prev` with `init`, reductions) warn on different units, or give an error with
+  `settings.strict_units`. `*` and `/` are unchecked in v1. Undeclared units are inferred,
+  and a formula whose unit differs from the declared one is flagged. Spelling is normalized
+  for comparison (`USD m` = `usd  M`).
 
 ## 3. Engine
 
@@ -162,7 +179,7 @@ Formulas are Python expressions validated against a whitelist:
 - **Declaration** in `functions.py`:
 
   ```python
-  from fm import function
+  from epm import function
 
   @function(returns="series", axis="fy")
   def amortization_schedule(principal, rate, years):

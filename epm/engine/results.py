@@ -1,4 +1,4 @@
-"""Result objects returned by :meth:`fm.engine.Engine.run`."""
+"""Result objects returned by :meth:`epm.engine.Engine.run`."""
 
 from __future__ import annotations
 

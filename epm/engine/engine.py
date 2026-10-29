@@ -7,6 +7,10 @@ Planning works on the dependency graph's strongly connected components:
 * a component whose cycles all pass through ``prev()`` is a **recurrence** (e.g.
   ``cash = prev(cash) + fcf``) and is stepped one period at a time;
 * a component with a same-period cycle is a **circular reference** and is rejected.
+
+Metrics can take values from CSV/XLSX sources: ``input`` binds the whole metric, while
+``history`` fills historical periods from a source and leaves forecast periods to the
+formula. Units are inferred alongside shapes, and mixing them is reported.
 """
 
 from __future__ import annotations
@@ -14,12 +18,13 @@ from __future__ import annotations
 import difflib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
 
-from ..errors import Diagnostic, FmError, FormulaError
+from ..errors import Diagnostic, EpmError, FormulaError
 from ..formula import (
     FULL,
     SCALAR,
@@ -34,7 +39,10 @@ from ..formula import (
 from ..formula.compiler import Evaluator
 from ..formula.ir import Node
 from ..formula.shapes import Shape, describe, join
-from ..model.schema import Check, Metric, Model
+from ..formula.units import ANY, CONFLICT, Unit, UnitIssue, infer_unit, unit_key
+from ..formula.units import join as join_units
+from ..model.schema import Binding, Check, Metric, Model
+from ..sources import DirectoryFiles, FileProvider, SourceError, SourceLoader
 from .graph import DependencyGraph, Lag, find_cycle, topo_order
 from .results import CheckResult, MetricStatus, RunResult
 
@@ -45,9 +53,11 @@ Override = float | int | Mapping[Any, float | None] | pd.Series
 class CompiledMetric:
     name: str
     definition: Metric
-    kind: Literal["value", "formula"]
+    kind: Literal["value", "input", "formula"]
     declared_axis: str | None
     shape: Shape = UNKNOWN
+    unit: Unit = ANY
+    history: np.ndarray | None = None  # source values; only historical positions are used
     node: Node | None = None
     refs: dict[str, Lag] = field(default_factory=dict)
     evaluator: Evaluator | None = None
@@ -77,12 +87,27 @@ class Engine:
     :attr:`diagnostics`, and affected metrics report ``error`` or ``blocked`` when run.
     """
 
-    def __init__(self, model: Model):
+    def __init__(
+        self,
+        model: Model,
+        files: FileProvider | str | Path | None = None,
+        *,
+        sources: SourceLoader | None = None,
+    ):
+        """``files`` provides input files: a directory path or any :class:`FileProvider`.
+
+        ``sources`` lets an engine derived from another reuse its already-read files.
+        """
         self.model = model
+        self.files = DirectoryFiles(files) if isinstance(files, str | Path) else files
+        self.sources = sources or SourceLoader(model.sources, self.files)
         self.diagnostics: list[Diagnostic] = []
         self.axes = self._build_axes()
+        self._source_errors = self._validate_sources()
+        self._unmatched_reported: set[tuple[str, str]] = set()
         self.metrics = {name: self._prepare(name, m) for name, m in model.metrics.items()}
         self._infer_shapes()
+        self._infer_units()
         for cm in self.metrics.values():
             self._compile(cm)
         self.graph = DependencyGraph({n: cm.refs for n, cm in self.metrics.items()})
@@ -100,6 +125,9 @@ class Engine:
     def _fail(self, cm: CompiledMetric, code: str, message: str, **detail: Any) -> None:
         if cm.error is None:
             cm.error = self._error(f"metric:{cm.name}", code, message, **detail)
+
+    def _warn(self, obj: str, code: str, message: str, **detail: Any) -> None:
+        self.diagnostics.append(Diagnostic("warning", code, message, obj, detail))
 
     def _build_axes(self) -> dict[str, AxisInfo]:
         axes = {}
@@ -121,6 +149,24 @@ class Engine:
         default = self.model.settings.default_axis
         return default if default in self.axes else None
 
+    def _validate_sources(self) -> dict[str, Diagnostic]:
+        errors = {}
+        for name, source in self.model.sources.items():
+            obj = f"source:{name}"
+            if source.axis is not None and source.axis not in self.axes:
+                errors[name] = self._error(obj, "unknown_axis", f"unknown axis '{source.axis}'")
+                continue
+            try:
+                self.sources.table(name)
+            except SourceError as e:
+                errors[name] = self._error(obj, e.code, e.message, **e.detail)
+        return errors
+
+    def _binding_axis(self, m: Metric, binding: Binding) -> str | None:
+        source = self.model.sources.get(binding.source)
+        source_axis = source.axis if source is not None else None
+        return m.axis or source_axis or self.default_axis
+
     def _env(self, metric_axis: str | None) -> FormulaEnv:
         return FormulaEnv(self.axes, metric_axis, self.default_axis)
 
@@ -139,11 +185,41 @@ class Engine:
         return unknown
 
     def _prepare(self, name: str, m: Metric) -> CompiledMetric:
-        kind = "value" if m.value is not None else "formula"
+        kind = "value" if m.value is not None else "input" if m.input is not None else "formula"
         cm = CompiledMetric(name, m, kind, declared_axis=m.axis)
         if m.axis is not None and m.axis not in self.axes:
             self._fail(cm, "unknown_axis", f"unknown axis '{m.axis}'")
             cm.declared_axis = None
+            return cm
+        for binding in (m.input, m.history):
+            if binding is not None and binding.source not in self.model.sources:
+                suggestions = difflib.get_close_matches(binding.source, list(self.model.sources))
+                hint = f"; did you mean {', '.join(suggestions)}?" if suggestions else ""
+                self._fail(
+                    cm,
+                    "unknown_source",
+                    f"unknown source '{binding.source}'{hint}",
+                    suggestions=suggestions,
+                )
+                return cm
+        series_binding = m.history if m.history is not None else m.input
+        if series_binding is not None and series_binding.item is not None:
+            # a bound series fixes the axis: the metric's, else the source's, else the default
+            cm.declared_axis = self._binding_axis(m, series_binding)
+            if cm.declared_axis is None:
+                self._fail(
+                    cm,
+                    "missing_axis",
+                    "a bound series needs an axis: set 'axis' on the "
+                    "metric or the source, or settings.default_axis",
+                )
+                return cm
+            if cm.declared_axis not in self.axes:  # the source's axis; reported there
+                cm.error = self._source_errors[series_binding.source]
+                return cm
+        if kind == "input":
+            cm.shape = cm.declared_axis
+            return cm
         if kind == "value":
             if isinstance(m.value, dict):
                 cm.shape = cm.declared_axis or self.default_axis
@@ -217,10 +293,112 @@ class Engine:
                     f"'{cm.declared_axis}'",
                 )
 
+    def _unit_of(self, name: str) -> Unit:
+        cm = self.metrics.get(name)
+        return ANY if cm is None else cm.unit
+
+    def _infer_units(self) -> None:
+        """Fixed-point unit inference for metrics without a declared unit, then reporting."""
+        pending = []
+        for cm in self.metrics.values():
+            cm.unit = cm.definition.unit
+            if cm.unit is None and cm.kind == "formula" and cm.error is None:
+                pending.append(cm)
+        for _ in range(2 * len(pending) + 1):
+            changed = False
+            for cm in pending:
+                new = join_units(cm.unit, infer_unit(cm.node, self._unit_of))  # type: ignore[arg-type]
+                if new is not cm.unit and (
+                    new is CONFLICT or cm.unit is None or unit_key(new) != unit_key(cm.unit)  # type: ignore[arg-type]
+                ):
+                    cm.unit, changed = new, True
+            if not changed:
+                break
+
+        strict = self.model.settings.strict_units
+        for cm in self.metrics.values():
+            if cm.kind != "formula" or cm.node is None or cm.error is not None:
+                continue
+            issues: list[UnitIssue] = []
+            inferred = infer_unit(cm.node, self._unit_of, issues)
+            declared = cm.definition.unit
+            if (
+                declared is not None
+                and isinstance(inferred, str)
+                and unit_key(inferred) != unit_key(declared)
+            ):
+                issues.append(
+                    UnitIssue(f"formula gives '{inferred}' but the metric's unit is '{declared}'")
+                )
+            for issue in issues:
+                detail = {} if issue.col is None else {"col": issue.col}
+                if strict:
+                    self._fail(cm, "unit_mismatch", issue.message, **detail)
+                else:
+                    self._warn(f"metric:{cm.name}", "unit_mismatch", issue.message, **detail)
+
+    def _load(self, cm: CompiledMetric, binding: Binding) -> np.ndarray | float | None:
+        """Resolve a binding to numbers on the metric's axis, or a scalar for a cell."""
+        if binding.source in self._source_errors:
+            cm.error = self._source_errors[binding.source]
+            return None
+        try:
+            if binding.cell is not None:
+                value, uncached = self.sources.load_cell(binding)
+            else:
+                loaded = self.sources.load_series(binding, self.axes[cm.declared_axis])  # type: ignore[index]
+                value, uncached = loaded.data, loaded.uncached
+                key = (binding.source, cm.declared_axis)
+                if loaded.unmatched and key not in self._unmatched_reported:
+                    self._unmatched_reported.add(key)  # type: ignore[arg-type]
+                    self.diagnostics.append(
+                        Diagnostic(
+                            "info",
+                            "unmatched_labels",
+                            f"labels {', '.join(loaded.unmatched)} are not on axis "
+                            f"'{cm.declared_axis}' and are ignored",
+                            f"source:{binding.source}",
+                            {"labels": loaded.unmatched},
+                        )
+                    )
+        except SourceError as e:
+            self._fail(cm, e.code, e.message, **e.detail)
+            return None
+        if uncached:
+            self._warn(
+                f"metric:{cm.name}",
+                "uncached_formula",
+                f"{', '.join(uncached)} contain formulas with no saved value; open and save the "
+                "file in Excel so the values are stored",
+                cells=uncached,
+            )
+        return value
+
     def _compile(self, cm: CompiledMetric) -> None:
         if cm.error is not None:
             return
+        if cm.kind == "input":
+            loaded = self._load(cm, cm.definition.input)  # type: ignore[arg-type]
+            if loaded is None:
+                return
+            if isinstance(loaded, np.ndarray):
+                ax = self.axes[cm.shape]  # type: ignore[index]
+                cm.constant = pd.Series(loaded, index=ax.index, name=cm.name)
+            else:
+                cm.constant = self._broadcast(cm, np.float64(loaded))
+            return
         if cm.kind == "formula":
+            if cm.definition.history is not None:
+                ax = self.axes[cm.declared_axis]  # type: ignore[index]
+                if not ax.historical.any():
+                    self._warn(
+                        f"metric:{cm.name}",
+                        "unused_history",
+                        f"'history' has no effect: axis '{ax.name}' has no historical periods",
+                    )
+                cm.history = self._load(cm, cm.definition.history)  # type: ignore[assignment]
+                if cm.history is None:
+                    return
             cm.evaluator = compile_formula(cm.node, self._env(cm.declared_axis))  # type: ignore[arg-type]
             return
         value = cm.definition.value
@@ -308,6 +486,14 @@ class Engine:
             cc.evaluator = compile_formula(node, env)
         except FormulaError as e:
             cc.error = self._error(obj, e.code, e.message, **e.detail)
+            return cc
+        issues: list[UnitIssue] = []
+        infer_unit(node, self._unit_of, issues)
+        for issue in issues:
+            if self.model.settings.strict_units:
+                cc.error = cc.error or self._error(obj, "unit_mismatch", issue.message)
+            else:
+                self._warn(obj, "unit_mismatch", issue.message)
         return cc
 
     def _validate_tables(self) -> None:
@@ -324,19 +510,25 @@ class Engine:
         self._require(name)
         return self.metrics[name].shape  # type: ignore[return-value]
 
+    def unit(self, name: str) -> str | None:
+        """The declared or inferred unit of a metric, or ``None`` if unknown or mixed."""
+        self._require(name)
+        unit = self.metrics[name].unit
+        return unit if isinstance(unit, str) else None
+
     def trace(self, name: str, direction: str = "upstream", depth: int | None = None) -> list[str]:
         self._require(name)
         if direction == "upstream":
             return self.graph.upstream(name, depth)
         if direction == "downstream":
             return self.graph.downstream(name, depth)
-        raise FmError("invalid_argument", "direction must be 'upstream' or 'downstream'")
+        raise EpmError("invalid_argument", "direction must be 'upstream' or 'downstream'")
 
     def _require(self, name: str) -> None:
         if name not in self.metrics:
             suggestions = difflib.get_close_matches(name, list(self.metrics), n=3)
             hint = f"; did you mean {', '.join(suggestions)}?" if suggestions else ""
-            raise FmError(
+            raise EpmError(
                 "unknown_metric", f"unknown metric '{name}'{hint}", suggestions=suggestions
             )
 
@@ -360,9 +552,16 @@ class Engine:
             else:
                 value = float(raw)
             metrics[name] = cm.definition.model_copy(
-                update={"value": value, "formula": None, "axis": axis}
+                update={
+                    "value": value,
+                    "input": None,
+                    "formula": None,
+                    "history": None,
+                    "axis": axis,
+                }
             )
-        return Engine(self.model.model_copy(update={"metrics": metrics}))
+        model = self.model.model_copy(update={"metrics": metrics})
+        return Engine(model, self.files, sources=self.sources)
 
     def run(
         self,
@@ -433,6 +632,15 @@ class Engine:
             return pd.Series(raw, index=ax.index, name=cm.name)
         return pd.Series(np.full(len(ax), raw), index=ax.index, name=cm.name)
 
+    def _with_history(self, cm: CompiledMetric, value: pd.Series) -> pd.Series:
+        """Replace historical periods with the values bound by ``history``."""
+        if cm.history is None:
+            return value
+        mask = self.axes[cm.shape].historical  # type: ignore[index]
+        data = value.to_numpy(dtype=float, copy=True)
+        data[mask] = cm.history[mask]
+        return pd.Series(data, index=value.index, name=cm.name)
+
     def _value_status(
         self,
         cm: CompiledMetric,
@@ -478,7 +686,10 @@ class Engine:
             status[name] = MetricStatus("blocked", f"depends on '{bad}', which has errors")
             return
         try:
-            value = cm.constant if cm.kind == "value" else self._broadcast(cm, cm.evaluator(values))
+            if cm.kind == "formula":
+                value = self._with_history(cm, self._broadcast(cm, cm.evaluator(values)))
+            else:
+                value = cm.constant
         except Exception as e:  # noqa: BLE001 - any calculation failure is reported, not raised
             message = f"{type(e).__name__}: {e}"
             status[name] = MetricStatus("error", message)
@@ -522,8 +733,11 @@ class Engine:
             for t in range(len(ax)):
                 for m in members:
                     cm = self.metrics[m]
-                    out = self._broadcast(cm, cm.evaluator(values))
-                    arrays[m][t] = float(out.iloc[t])
+                    if cm.history is not None and ax.historical[t]:
+                        arrays[m][t] = cm.history[t]
+                    else:
+                        out = self._broadcast(cm, cm.evaluator(values))
+                        arrays[m][t] = float(out.iloc[t])
                     values[m] = pd.Series(arrays[m].copy(), index=ax.index, name=m)
         except Exception as e:  # noqa: BLE001
             message = f"{type(e).__name__}: {e} (at {ax.name}={ax.index[t]}, in '{m}')"

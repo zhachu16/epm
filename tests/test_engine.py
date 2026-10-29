@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fm import Engine, FmError, load_model
+from epm import Engine, EpmError, load_model
 
 
 def make(metrics, **extra) -> Engine:
@@ -208,10 +208,10 @@ def test_override_scalar_on_series_input_keeps_axis():
 
 def test_unknown_output_or_override_raises():
     e = make({"a": {"value": 1}})
-    with pytest.raises(FmError) as err:
+    with pytest.raises(EpmError) as err:
         e.run(outputs=["b"])
     assert err.value.code == "unknown_metric"
-    with pytest.raises(FmError):
+    with pytest.raises(EpmError):
         e.run(overrides={"nope": 1})
 
 

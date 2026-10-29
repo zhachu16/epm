@@ -1,8 +1,8 @@
 import pytest
 
-from fm.errors import FormulaError
-from fm.formula import FULL, parse_formula, references
-from fm.formula.builtins import irr
+from epm.errors import FormulaError
+from epm.formula import FULL, parse_formula, references
+from epm.formula.builtins import irr
 
 
 @pytest.mark.parametrize(
