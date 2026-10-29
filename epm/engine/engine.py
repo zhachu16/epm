@@ -584,6 +584,7 @@ class Engine:
             if table.axis is not None and table.axis not in self.axes:
                 self._error(obj, "unknown_axis", f"unknown axis '{table.axis}'")
             self._unknown_refs(obj, [r.metric for r in table.rows if r.metric is not None])
+        self._unknown_refs("settings", self.model.settings.key_outputs)
 
     # -- queries -----------------------------------------------------------------------
 

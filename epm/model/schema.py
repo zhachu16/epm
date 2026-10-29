@@ -41,6 +41,7 @@ class Settings(_Base):
     currency: str | None = None
     default_axis: str | None = None
     strict_units: bool = False  # unit mismatches are errors instead of warnings
+    key_outputs: list[str] = Field(default_factory=list)  # shown in change previews
 
 
 class Axis(_Base):
