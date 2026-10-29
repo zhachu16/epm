@@ -8,7 +8,8 @@ clients such as Claude both work on the same projects.
 
 > This branch is generated from `main` of [zhachu16/epm](https://github.com/zhachu16/epm)
 > after its checks pass, and **Render deploys it**. Make changes on `main`; anything
-> committed here is overwritten.
+> committed here is overwritten, except `service/config.py`, which holds this deployment's
+> credentials and is kept.
 
 | Path | What |
 | --- | --- |
@@ -44,7 +45,8 @@ Without the command at the end, the container starts the service on Supabase and
 ## Deploy on Render
 
 1. Run [`service/schema.sql`](service/schema.sql) once in Supabase, create an R2 bucket and
-   token, and fill in `service/config.py` on `main`.
+   token, and fill in [`service/config.py`](service/config.py) **on this branch**. It is the
+   one file here that is yours to edit: updates from `main` keep it as it is.
 2. In Render, **New → Blueprint** on this repository and branch: `render.yaml` defines one
    Docker web service built from `service/Dockerfile`, health-checked at `/api/health`.
 3. Check the deployed service end to end:
