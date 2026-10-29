@@ -99,7 +99,7 @@ function toDef(form: Form): Record<string, unknown> {
     inputs,
     outputs: form.outputs,
     mode: form.mode,
-    overrides: Object.keys(overrides).length ? overrides : null,
+    overrides,
     plot,
     description: form.description.trim() || null,
   };
