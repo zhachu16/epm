@@ -19,6 +19,7 @@ Notes for agents and people changing this repository. To *use* epm to build mode
 | `frontend-web/` | The cloud web app, hosted on Vercel. A standalone Vite + React app, separate from `frontend-local`. |
 | `examples/lbo/` | The sample LBO, checked by golden tests against an independent calculation. |
 | `benchmarks/run.py` | Timings for runs, edits and 1k-scenario sweeps. |
+| `skills/` | Agent Skills for working on models through the hosted service's MCP connector: `epm-create-model` and `epm-edit-model`. |
 | `scripts/split-branches.sh`, `render.yaml` | Deployment: the generated `local-app`, `web-frontend` and `web-backend` branches, and the Render blueprint. See [`docs/deployment.md`](docs/deployment.md). |
 
 ## Checks
@@ -74,7 +75,9 @@ CI runs all of these. The end-to-end tests need the built UI and a Chromium for 
   checks that every built-in and listed diagnostic code is documented. A new built-in needs a
   row in the guide's formula table. `service/tests/test_docs.py` runs every `curl` and
   Python example in `docs/user-guide.md` against a live in-memory service, and checks that
-  every HTTP route and MCP tool is listed there.
+  every HTTP route and MCP tool is listed there. `service/tests/test_skills.py` builds the
+  skills' example models and checks every tool and argument they name, so a new or renamed
+  MCP tool needs the skills' `reference.md` updated (both copies).
 - **API shapes.** The frontends' types live in `frontend-local/src/api/types.ts` and
   `frontend-web/src/api/types.ts`; keep them in step with what `epm/server/app.py` and
   `service/api.py` return. Both frontends read the snapshot from `workspace_snapshot()`.
