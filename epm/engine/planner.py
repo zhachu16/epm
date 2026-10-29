@@ -142,6 +142,10 @@ def _blocks(
         elif len(names) > 1:
             message += f"; the loop spans circularities {', '.join(names)}"
         else:
-            message += "; declare it under 'circularities' to solve it iteratively"
-        return [], ("circular_reference", message, {"path": path})
+            ordered = [m for m in comp if m in group]
+            message += (
+                "; to solve it iteratively, declare these metrics under 'circularities': "
+                + ", ".join(ordered)
+            )
+        return [], ("circular_reference", message, {"path": path, "members": sorted(group)})
     return blocks, None

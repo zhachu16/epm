@@ -348,23 +348,41 @@ history endpoints.
 
 ## 11. Milestones
 
-| # | Deliverable | Done when |
+| # | Deliverable | Status |
 | --- | --- | --- |
-| M0 | Python scaffold: package, pyproject, ruff, pytest, CI | `ruff` and `pytest` pass in CI |
-| M1 | Schemas, formula parser/compiler, graph, vectorized evaluator, `prev()` recurrences | Unit tests on a toy 3-statement model |
-| M2 | Sources (CSV/XLSX mapping), history and forecast periods, units and axis validation | Errors for bad references, axes and units |
-| M3 | Declared circular solver, with convergence reporting | Average-interest debt schedule converges; undeclared cycle rejected with path |
-| M4 | Archive I/O, fingerprints, selective recalc, parquet cache | An edit recomputes only the downstream subset (asserted in tests) |
-| M5 | Ops layer: atomic batches, rename/delete semantics, previews, in-memory session history | Property tests: apply followed by inverse is identity |
-| M6 | Sandboxed function workers | Timeout, memory and CPU limits enforced in tests |
-| M7 | run, sweep, analyses, checks, plus the full `fm` CLI with `--json` | Every listed command works end to end |
-| M8 | Sample LBO and golden tests | Matches the reference values |
-| M9 | FastAPI server as the session owner (undo, pending), CLI-to-server routing via lock file, websocket events, file watcher, terminal endpoint | API tests; a CLI edit while serving is undoable from the UI |
-| M10 | Vite app scaffold, UI shell, explorer, graph view, inspector | `npm run build` passes; graph renders the LBO; click-through works |
-| M11 | Editors (metric, table, source, function, JSON), analyses UI, Changes panel | A full edit, review and commit loop in Playwright e2e |
-| M12 | Hardening: performance pass (sweeps of 1k scenarios), docs, agent guide | Agent guide (`docs/AGENTS.md`) and CLI reference published |
+| M0 | Python scaffold: package, pyproject, ruff, pytest, CI | done |
+| M1 | Schemas, formula parser/compiler, graph, vectorized evaluator, `prev()` recurrences | done |
+| M2 | Sources (CSV/XLSX mapping), history and forecast periods, units and axis validation | done |
+| M3 | Declared circular solver with convergence reporting; forecast-only metric scope | done |
+| M4 | Archive I/O, fingerprints, selective recalc, parquet cache, `Workspace` API | done |
+| M5 | Ops layer: atomic batches, rename/delete semantics, previews, in-memory session history | done |
+| M6 | Custom functions in a sandboxed worker (CPU, memory, timeout, import allowlist) | done |
+| M7 | run, sweep, analyses, checks, plus the `fm` CLI with `--json` | done |
+| M8 | Sample LBO (`examples/lbo`) and golden tests against an independent calculation | done |
+| M9 | FastAPI server as the session owner (undo, pending), CLI-to-server routing via lock file, websocket events, file watcher, terminal endpoint | next |
+| M10 | Vite app scaffold, UI shell, explorer, graph view, inspector | |
+| M11 | Editors (metric, table, source, function, JSON), analyses UI, Changes panel | |
+| M12 | Hardening: performance pass (sweeps of 1k scenarios), docs, agent guide | |
 
 The backend (M0–M9) is usable headless by agents before any UI work starts.
+
+### Notes from building M0–M8
+
+- **Forecast scope.** Metrics can be `"scope": "forecast"`, declared or inferred from what
+  they read. This keeps post-close balances (debt, cash, equity) blank in historical periods
+  without warnings. `prev(x, init=...)` starts at the first forecast period, and reductions
+  skip history.
+- **Default axis.** A metric that reads its own previous period defaults to
+  `settings.default_axis`.
+- **Undeclared loops.** The circular-reference error lists every member of the loop, ready
+  to copy into a `circularities` block.
+- **Function worker.** The worker is a `python -I -m epm.functions.worker` subprocess
+  talking framed pickle over pipes. `multiprocessing` spawn would re-import the caller's
+  main script. Module-level imports in function code are moved to the top of
+  `functions.py`.
+- **Session commands.** CLI history, undo, redo, rollback and pending commands report that
+  they need `fm serve`, until M9 provides the session.
+- **Cache directory.** Unpacked model directories write `cache/`; it is git-ignored.
 
 ## 12. Risks
 

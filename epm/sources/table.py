@@ -65,12 +65,6 @@ class SourceTable:
                 )
             seen[label] = ref
             self.periods.append((p, label))
-        if not self.periods:
-            line = "row" if self.by_rows else "column"
-            raise SourceError(
-                "empty_source",
-                f"no axis labels found in the index {line} of '{name}' ({self._line_name()})",
-            )
 
         # item labels along the label line, skipping the index line itself
         self.items: dict[str, int] = {}
@@ -98,6 +92,12 @@ class SourceTable:
         return [label for _, label in self.periods]
 
     def series(self, item: str) -> list[Entry]:
+        if not self.periods:  # checked here, so cell-only sources need no axis labels
+            line = "row" if self.by_rows else "column"
+            raise SourceError(
+                "empty_source",
+                f"no axis labels found in the index {line} of '{self.name}' ({self._line_name()})",
+            )
         key = item.strip()
         if key in self.duplicates:
             raise SourceError(

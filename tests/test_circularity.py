@@ -48,7 +48,9 @@ def test_undeclared_loop_is_rejected_with_hint():
     e = make(FEES)
     errors = {d.object for d in e.diagnostics if d.code == "circular_reference"}
     assert errors == {"metric:uses", "metric:debt", "metric:fees"}
-    assert "declare it under 'circularities'" in e.diagnostics[0].message
+    message = e.diagnostics[0].message
+    assert "declare these metrics under 'circularities': uses, debt, fees" in message
+    assert e.diagnostics[0].detail["members"] == ["debt", "fees", "uses"]
     assert e.run().status["equity"].state == "blocked"
 
 

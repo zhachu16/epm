@@ -221,11 +221,18 @@ def render(result: AnalysisResult, path: str) -> None:
         ax.set_yticks(range(len(chart["y_values"])), [f"{v:g}" for v in chart["y_values"]])
         ax.set_xlabel(chart["x"])
         ax.set_ylabel(chart["y"])
+        finite = [v for row in grid for v in row if not math.isnan(v)]
+        low, high = (min(finite), max(finite)) if finite else (0.0, 1.0)
         for i, row in enumerate(grid):
             for j, v in enumerate(row):
                 if not math.isnan(v):
-                    ax.text(j, i, fmt(v), ha="center", va="center", color="white", fontsize=8)
-        fig.colorbar(image, ax=ax, label=chart["z"])
+                    # dark text on the bright end of viridis, light text elsewhere
+                    bright = high > low and (v - low) / (high - low) > 0.6
+                    color = "black" if bright else "white"
+                    ax.text(j, i, fmt(v), ha="center", va="center", color=color, fontsize=8)
+        bar = fig.colorbar(image, ax=ax, label=chart["z"])
+        bar.formatter = matplotlib.ticker.FuncFormatter(lambda v, _: fmt(v))
+        bar.update_ticks()
     ax.set_title(plot.title or result.name)
     fig.tight_layout()
     fig.savefig(path)
