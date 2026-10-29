@@ -1,0 +1,16 @@
+# Render blueprint for the epm service. It deploys the web-backend branch, which
+# scripts/split-branches.sh keeps in step with main.
+services:
+  - type: web
+    name: epm-service
+    runtime: docker
+    repo: https://github.com/zhachu16/epm
+    branch: web-backend
+    dockerfilePath: ./service/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    # one instance is plenty for the alpha (saves stay safe with more: each checks the
+    # version it builds on); the free plan sleeps when idle and wakes slowly
+    plan: starter
+    numInstances: 1
+    autoDeploy: true

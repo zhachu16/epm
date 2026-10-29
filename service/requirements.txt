@@ -1,0 +1,5 @@
+# The service's dependencies on top of epm. From the repository root:
+#   pip install ".[plot]" -r service/requirements.txt
+mcp>=2.3,<3
+supabase>=2.30
+boto3>=1.35
