@@ -11,8 +11,9 @@ The hosted epm is two deployments fed by two branches of this repository:
 
 The three branches are generated from `main` by `scripts/split-branches.sh`. The
 **Deployment branches** workflow runs it after CI passes on `main`, so a push to `main`
-reaches Render and Vercel only when every check is green. Never edit those branches: the
-next run adds a commit that matches `main` again. To regenerate them by hand, run the
+reaches Render and Vercel only when every check is green. Never edit those branches, except
+`service/config.py` on `web-backend` (step 3): the next run adds a commit that matches
+`main` again. To regenerate them by hand, run the
 workflow from the Actions tab, or:
 
 ```text
@@ -39,12 +40,18 @@ Everything below is done once, by hand, in the services' dashboards.
 
 ## 3. Fill in the service's settings
 
-Edit `service/config.py` on `main`: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET` if it is not
-`epm`. Commit and push. The service refuses to start while any of them is still a
-placeholder.
+Edit `service/config.py` **on the `web-backend` branch**: `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and
+`R2_BUCKET` if it is not `epm`. Commit and push to `web-backend`; Render redeploys. The
+service refuses to start while any of them is still a placeholder.
 
-These keys are then readable by anyone who can read the repository. That is the alpha's
+This is the one file you edit on a deployment branch. `split-branches.sh` keeps
+`web-backend`'s own `service/config.py` every time it rebuilds the branch, so the
+credentials never reach `main` or the other branches, and on `main` the file keeps its
+placeholders. A new setting added to `config.py` on `main` therefore has to be added to
+`web-backend`'s copy by hand.
+
+The keys are readable by anyone who can read the repository. That is the alpha's
 choice for simplicity; keep the repository private, and move the keys to environment
 variables before sharing it or the app more widely.
 
@@ -78,10 +85,10 @@ it, reads it back over MCP, and deletes the copy.
 
 ## 6. Links back to the web app
 
-With both URLs known, set `WEB_URL` in `service/config.py` to the Vercel URL, so MCP's
-`get_project` returns a link to the project in the web app. `PUBLIC_URL` can stay empty:
-the service takes its own address from each request. Commit to `main`; the service
-redeploys once CI passes.
+With both URLs known, set `WEB_URL` in `service/config.py` on `web-backend` to the Vercel
+URL, so MCP's `get_project` returns a link to the project in the web app. `PUBLIC_URL` can
+stay empty: the service takes its own address from each request. Commit to `web-backend`;
+Render redeploys.
 
 ## Day to day
 

@@ -679,7 +679,8 @@ points it at the service; `vercel.json` rewrites routes to `index.html`.
 - **Branches.** `scripts/split-branches.sh` builds `local-app`, `web-frontend` and
   `web-backend` from `main`, each with only what its target needs, adding a commit to each
   branch whose files changed (never force-pushing). The *Deployment branches* workflow runs
-  it after CI passes on `main`; CI itself skips those branches.
+  it after CI passes on `main`; CI itself skips those branches. `web-backend` keeps its own
+  `service/config.py`, which holds the credentials; on `main` it has placeholders.
 - **Smoke test.** `python -m service.smoke URL` checks a deployed service end to end
   (health, copy, edit, run, export, MCP) and deletes what it created. CI builds the Docker
   image and runs the smoke test against it.

@@ -98,7 +98,7 @@ function toDef(form: Form): Record<string, unknown> {
     inputs,
     outputs: form.outputs,
     mode: form.mode,
-    overrides: Object.keys(overrides).length ? overrides : null,
+    overrides,
     plot,
     description: form.description.trim() || null,
   };
@@ -293,11 +293,15 @@ export function AnalysisEditor({ state, name }: { state: AppState; name: string 
         </div>
       </div>
 
-      <ActionBar dirty={dirty || !definition} onSubmit={submit} onRevert={revert} errors={errors}>
-        <button className="btn" onClick={run} disabled={running || !form.inputs.length || !form.outputs.length} data-testid="run-analysis">
-          {running ? "Running…" : "Run"}
-        </button>
-      </ActionBar>
+      <ActionBar
+        dirty={dirty || !definition}
+        onSubmit={submit}
+        onRevert={revert}
+        errors={errors}
+        onRun={() => void run()}
+        running={running}
+        runDisabled={!form.inputs.length || !form.outputs.length}
+      />
 
       {result && (
         <div className="card">

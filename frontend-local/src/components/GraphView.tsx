@@ -4,8 +4,8 @@ import {
   type Edge,
   Handle,
   MarkerType,
-  MiniMap,
   type Node,
+  type NodeChange,
   type NodeProps,
   Position,
   ReactFlow,
@@ -115,7 +115,7 @@ export function GraphView({ state }: { state: AppState }) {
 }
 
 function GraphCanvas({ state }: { state: AppState }) {
-  const { collapsed, setCollapsed, selected, open } = useStore();
+  const { collapsed, setCollapsed, selected, open, positions, moveNodes, resetLayout } = useStore();
   const initialised = useRef(false);
   if (!initialised.current) {
     initialised.current = true;
@@ -172,13 +172,6 @@ function GraphCanvas({ state }: { state: AppState }) {
     });
   }, [layout, flow]);
 
-  // SVG fill attributes do not resolve CSS variables, so read the theme once
-  const colors = useMemo(() => {
-    const css = getComputedStyle(document.documentElement);
-    const get = (name: string) => css.getPropertyValue(name).trim();
-    return { panel: get("--panel"), panel2: get("--panel-2"), muted: get("--muted"), border: get("--border") };
-  }, []);
-
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return null;
@@ -193,18 +186,19 @@ function GraphCanvas({ state }: { state: AppState }) {
       const id = groupNodeId(g.id);
       const box = layout.groups.get(id);
       if (!box) continue;
+      const position = positions[id] ?? { x: box.x, y: box.y };
       if (g.collapsed) {
-        out.push({ id, type: "collapsed", position: { x: box.x, y: box.y }, data: { group: g.id, count: g.members.length } });
+        out.push({ id, type: "collapsed", position, data: { group: g.id, count: g.members.length } });
         continue;
       }
       out.push({
         id,
         type: "metricGroup",
-        position: { x: box.x, y: box.y },
+        position,
         style: { width: box.width, height: box.height },
         data: { group: g.id, count: g.members.length },
         selectable: false,
-        draggable: false,
+        dragHandle: ".group-title",
       });
       for (const name of g.members) {
         const nodeBox = layout.nodes.get(name);
@@ -213,8 +207,7 @@ function GraphCanvas({ state }: { state: AppState }) {
           id: name,
           type: "metric",
           parentId: id,
-          extent: "parent",
-          position: { x: nodeBox.x, y: nodeBox.y },
+          position: positions[name] ?? { x: nodeBox.x, y: nodeBox.y },
           data: {
             name,
             info: state.metrics[name],
@@ -226,7 +219,17 @@ function GraphCanvas({ state }: { state: AppState }) {
       }
     }
     return out;
-  }, [layout, model, state.metrics, selected, matches]);
+  }, [layout, model, state.metrics, selected, matches, positions]);
+
+  // Nodes are laid out automatically; dragging one moves it until the page is reloaded or the
+  // layout is reset. A metric may leave its group's box; the group's title moves the group.
+  const onNodesChange = (changes: NodeChange[]) => {
+    const moved: Record<string, { x: number; y: number }> = {};
+    for (const change of changes) {
+      if (change.type === "position" && change.position) moved[change.id] = change.position;
+    }
+    if (Object.keys(moved).length) moveNodes(moved);
+  };
 
   const edges = useMemo<Edge[]>(
     () =>
@@ -298,6 +301,18 @@ function GraphCanvas({ state }: { state: AppState }) {
         <button className="btn small" onClick={() => setCollapsed([])}>
           Expand all
         </button>
+        <button
+          className="btn small"
+          disabled={!Object.keys(positions).length}
+          onClick={() => {
+            resetLayout();
+            requestAnimationFrame(() => flow.fitView({ padding: 0.05, maxZoom: 1.1, duration: 250 }));
+          }}
+          title="Put dragged nodes back where the automatic layout puts them"
+          data-testid="reset-layout"
+        >
+          Reset layout
+        </button>
         <span className="pill" title="Edge styles">
           <svg width="26" height="6" aria-hidden>
             <line x1="0" y1="3" x2="26" y2="3" stroke="currentColor" strokeDasharray="6 4" />
@@ -316,7 +331,7 @@ function GraphCanvas({ state }: { state: AppState }) {
         minZoom={0.05}
         maxZoom={2}
         nodesConnectable={false}
-        nodesDraggable={false}
+        onNodesChange={onNodesChange}
         onlyRenderVisibleElements
         onNodeClick={(_, node) => {
           if (node.type === "metric") open("metric", node.id);
@@ -336,14 +351,6 @@ function GraphCanvas({ state }: { state: AppState }) {
       >
         <Background gap={24} size={1} />
         <Controls showInteractive={false} />
-        <MiniMap
-          pannable
-          zoomable
-          bgColor={colors.panel}
-          maskColor="rgba(0, 0, 0, 0.25)"
-          nodeColor={(n) => (n.type === "metric" ? colors.muted : colors.panel2)}
-          nodeStrokeColor={colors.border}
-        />
       </ReactFlow>
       {hover && hovered && (
         <div className="tooltip" style={{ left: hover.x, top: hover.y }} data-testid="graph-tooltip">
