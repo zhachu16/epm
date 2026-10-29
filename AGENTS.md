@@ -71,7 +71,9 @@ CI runs all of these. The end-to-end tests need the built UI and a Chromium for 
 - **Docs are tested.** `tests/test_docs.py` applies every batch, runs every `fm -m
   examples/lbo …` command and every Python example in `README.md` and the agent guide, and
   checks that every built-in and listed diagnostic code is documented. A new built-in needs a
-  row in the guide's formula table.
+  row in the guide's formula table. `service/tests/test_docs.py` runs every `curl` and
+  Python example in `docs/user-guide.md` against a live in-memory service, and checks that
+  every HTTP route and MCP tool is listed there.
 - **API shapes.** The frontends' types live in `frontend-local/src/api/types.ts` and
   `frontend-web/src/api/types.ts`; keep them in step with what `epm/server/app.py` and
   `service/api.py` return. Both frontends read the snapshot from `workspace_snapshot()`.

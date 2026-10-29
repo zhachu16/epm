@@ -2,6 +2,8 @@
 
 This guide is for AI agents that build, inspect and change epm models. Everything here works
 through the `fm` CLI with `--json`; the same operations exist in the Python API (see the end).
+On the hosted service the same batches, definitions and formulas apply through MCP tools such
+as `apply_batch` and `show`, with a `project_id`; see the [user guide](user-guide.md#mcp-reference).
 
 ## The model in one minute
 

@@ -392,7 +392,7 @@ served by `fm serve` from `frontend-local/dist`. The cloud web app is a separate
 | M15 | Service layer and HTTP API: projects, batches, runs, files, outputs, versions, undo | done |
 | M16 | MCP endpoint over the same service layer | done |
 | M17 | `frontend-web`: projects page, project view, autosave status, versions, files and outputs, share links, example copy, docs page | done |
-| M18 | Docs: user guide with HTTP and MCP usage and the onboarding example, all tested | planned |
+| M18 | Docs: user guide with HTTP and MCP usage and the onboarding example, all tested | done |
 | M19 | Deployment: Dockerfile and Railway config, Vercel config, CI jobs, retention and backup job | planned |
 
 The backend (M0–M9) is usable headless by agents before any UI work starts. M13–M19 land
@@ -705,6 +705,17 @@ points it at the service; `vercel.json` rewrites routes to `index.html`.
   that loses a race shows "changed elsewhere" in the editor and the top bar. The Changes
   panel only shows previews; Versions, Files and Outputs panels replace history, proposals
   and the terminal. The docs page bundles `docs/user-guide.md` and `docs/agent-guide.md`.
+
+### 12.12 Notes from M18
+
+- **The user guide's examples are real.** Its `bash` blocks that use `$EPM` run in order as
+  one script, through `bash`, `curl` (failing on any HTTP error) and `jq`, against a live
+  service on in-memory storage; its Python MCP example then runs against the project that
+  script created. Every HTTP route and MCP tool must appear in the guide.
+- **One guide for people and agents on the service.** Model conventions stay in the agent
+  guide; the user guide covers projects, versions and recovery, files, sharing, access, and
+  the HTTP and MCP references. The web app's docs page shows both, with links between them
+  rewritten to its own pages.
 
 ## 13. Risks
 

@@ -145,7 +145,10 @@ test("searches, renames and deletes projects", async ({ page, request }) => {
 });
 
 test("shows the docs", async ({ page }) => {
-  await page.goto("/docs/agent-guide");
+  await page.goto("/docs");
+  await expect(page.getByTestId("docs")).toContainText("Getting started");
+  await page.getByRole("link", { name: "agent guide" }).first().click();
+  await expect(page).toHaveURL(/\/docs\/agent-guide$/);
   await expect(page.getByTestId("docs")).toContainText("Ground rules");
   await page.goto("/docs/agent-guide#diagnostics");
   await expect(page.locator("#diagnostics")).toBeVisible();

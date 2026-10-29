@@ -15,8 +15,9 @@ operations, custom functions, sweeps and analyses, the `fm` CLI, a complete samp
 sample LBO takes a few seconds; `python benchmarks/run.py` measures it.
 
 **Agents** building or changing models should start with the
-[agent guide](docs/agent-guide.md). People working on epm itself: see
-[`AGENTS.md`](AGENTS.md).
+[agent guide](docs/agent-guide.md). The hosted version, with projects, versions, an HTTP
+API and an MCP endpoint, is described in the [user guide](docs/user-guide.md). People
+working on epm itself: see [`AGENTS.md`](AGENTS.md).
 
 ## Quick start
 

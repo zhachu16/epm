@@ -30,7 +30,10 @@ export function slugify(text: string): string {
     .replace(/\s+/g, "-");
 }
 
-/** Markdown to HTML, with heading ids so in-page links such as (#diagnostics) work. */
+/**
+ * Markdown to HTML, with heading ids so in-page links such as (#diagnostics) work, and links
+ * between guides (agent-guide.md#formulas) pointing at their pages here.
+ */
 export function renderGuide(markdown: string): string {
   const marked = new Marked({
     renderer: {
@@ -40,7 +43,9 @@ export function renderGuide(markdown: string): string {
       },
     },
   });
-  return marked.parse(markdown, { async: false });
+  return marked
+    .parse(markdown, { async: false })
+    .replace(/href="([\w-]+)\.md(#[^"]*)?"/g, (_, slug: string, hash = "") => `href="/docs/${slug}${hash}"`);
 }
 
 export function DocsPage({ guide }: { guide?: string }) {
