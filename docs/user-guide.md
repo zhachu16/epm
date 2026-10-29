@@ -384,6 +384,10 @@ back as tool errors whose text starts with the error code, for example
 Ask an agent to undo or roll back, and it uses `undo` or `rollback`; like the web app's
 restore, both save a new version, so nothing is lost.
 
+The repository's `skills/` folder has two Agent Skills, `epm-create-model` and
+`epm-edit-model`, that teach an agent this workflow: read before writing, preview with
+`dry_run`, commit with `expected_version`, validate, and recover with `undo`.
+
 ## Running the service yourself
 
 The service is the `service/` folder of the repository, on top of the `epm` package. With
