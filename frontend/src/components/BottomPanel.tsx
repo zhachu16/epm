@@ -1,5 +1,7 @@
 import type { AppState, Diagnostic } from "../api/types";
 import { type BottomTab, type TabKind, useStore } from "../store";
+import { ChangesPanel } from "./ChangesPanel";
+import { TerminalPanel } from "./TerminalPanel";
 
 const KINDS = new Set<TabKind>(["metric", "table", "function", "analysis", "source", "check", "circularity", "axis"]);
 
@@ -7,8 +9,9 @@ export function BottomPanel({ state }: { state: AppState }) {
   const { bottom, setBottom } = useStore();
   const problems = state.diagnostics.filter((d) => d.severity !== "info");
   const failedChecks = Object.entries(state.checks).filter(([, c]) => c.state !== "passed");
+  const preview = useStore((s) => s.preview);
   const tabs: { id: BottomTab; label: string; count?: number; hot?: boolean; bad?: boolean }[] = [
-    { id: "changes", label: "Changes", count: state.pending.length, hot: state.pending.length > 0 },
+    { id: "changes", label: "Changes", count: state.pending.length + (preview ? 1 : 0), hot: state.pending.length > 0 },
     { id: "problems", label: "Problems", count: problems.length + failedChecks.length, bad: problems.some((p) => p.severity === "error") },
     { id: "terminal", label: "Terminal" },
     { id: "logs", label: "Logs" },
@@ -23,11 +26,12 @@ export function BottomPanel({ state }: { state: AppState }) {
           </button>
         ))}
       </div>
-      <div className="panel-body">
+      <div className="panel-body" style={{ overflow: bottom === "terminal" || bottom === "changes" ? "hidden" : "auto" }}>
         {bottom === "problems" && <Problems state={state} problems={problems} />}
         {bottom === "logs" && <Logs />}
-        {bottom === "changes" && <div className="empty">Change previews arrive with the editors.</div>}
-        {bottom === "terminal" && <div className="empty">Terminal coming next.</div>}
+        {bottom === "changes" && <ChangesPanel state={state} />}
+        {/* kept mounted so the terminal keeps its scrollback */}
+        <TerminalPanel visible={bottom === "terminal"} />
       </div>
     </div>
   );

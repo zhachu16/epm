@@ -289,41 +289,58 @@ fm serve [--port 8765]
 
 ## 8. Server
 
-The HTTP API mirrors the Python API: `GET /objects`, `GET /objects/{kind}/{name}`,
-`POST /batches` (`propose` or `commit`), `POST /run`, `POST /sweep`,
-`POST /analyses/{name}/run`, `GET /trace/{name}`, `GET /graph`, `GET /validate`, and
-history endpoints.
+`fm serve` owns the session: the loaded model, its cache, undo and redo history, and pending
+proposals. It listens on localhost only. Requests must carry a localhost `Host` header (against
+DNS rebinding) and, except `/api/health`, the session token, which the served `index.html`
+embeds. A lock file (`.epm-session.lock` next to the model) records the port and token, so
+`fm` commands for that model are forwarded to the session instead of editing the files
+underneath it, and share its undo history.
 
-- **Live updates.** A websocket at `/events` pushes `model_changed`, `calc_progress`,
-  `pending_added` and log events. A file watcher detects CLI or agent edits to the archive, so
-  the UI updates live.
-- **Terminal.** `/terminal` is a websocket that runs `fm` commands only, parsed and dispatched
-  in-process. It is not a raw shell.
+The HTTP API mirrors the Python API: `GET /api/state` (model, values, statuses, checks,
+diagnostics, history and pending in one snapshot), `GET /api/trace/{name}`,
+`GET /api/sources/{name}/preview`, `POST /api/batches` (`commit`, `dry_run` or `propose`),
+`PUT /api/model` and `PUT /api/functions` (whole-file edits, diffed into ops),
+`POST /api/pending/{id}/commit|reject`, `POST /api/undo`, `/api/redo`,
+`/api/rollback/{id}`, `POST /api/run`, `/api/sweep`, `/api/analyses/{name}/run` and
+`POST /api/cli`.
+
+- **Live updates.** A websocket at `/api/events` pushes `model_changed` and log events. A
+  file watcher reloads the model when it changes on disk outside the session.
+- **Terminal.** `/api/terminal` is a websocket that runs `fm` commands only, parsed and
+  dispatched in-process. It is not a raw shell.
 
 ## 9. Frontend
 
+A standalone Vite + React + TypeScript app in `frontend/`, served by `fm serve` from
+`frontend/dist`.
+
 - **Left (explorer).** A searchable tree of folders → inputs, metrics, tables, functions,
-  analyses, checks and sources, with fuzzy search and badges for status and errors.
+  analyses, checks, sources, circularities, axes and files, with status badges, and a
+  **New** menu for each kind of object.
 - **Centre (tabs).**
-  - Metric editor: a form view, plus a formula field in Monaco with name completion, hover and
-    go-to-definition.
-  - Table editor: a grid with drag-to-reorder rows, rendered with values.
-  - `functions.py` and `model.json` text editors with schema validation.
-  - Source mapping editor with a preview of the mapped range.
-  - Analysis editor and chart.
-  - Visual and text editing round-trip through the ops layer.
+  - Metric editor: a form (formula, value, per-period values or source binding; unit, axis,
+    scope, folder), with the formula in Monaco with completion of metrics, built-ins and
+    functions, and hover showing values.
+  - Table editor: rows with labels, styles, headers and reordering, rendered with values.
+  - Function editor, plus `functions.py` and `model.json` text editors.
+  - Source mapping editor with file upload and a preview of what metrics can bind to.
+  - Analysis editor: inputs as value lists or ranges, outputs, grid or paired mode, a line or
+    heatmap chart (ECharts) and a results table.
+  - JSON editors for checks, circularities, axes and settings.
+  - Every editor has **Preview** (a dry run shown in Changes) and **Save**; all edits go
+    through the ops layer.
 - **Default view (graph).** React Flow with an elkjs layered layout. Nodes are metrics; table
-  groups are collapsible compound nodes. Hovering an edge or node shows its formula; clicking
-  opens its definition. Circular blocks are highlighted, and the upstream or downstream of a
-  selection can be filtered.
+  groups are collapsible compound nodes, collapsed into an overview for large models.
+  Hovering a node or edge shows its formula and value; clicking opens the metric. Circular
+  members are marked, and the graph can be filtered to the upstream or downstream of a
+  selection.
 - **Right (inspector).** For the selected metric: value (a sparkline and table for a series),
-  definition and source, axis, unit, dependencies and dependants (both clickable), status and
-  solver stats.
-- **Bottom panel.** Terminal (xterm.js), logs, validation problems, and the **Changes** tab:
-  pending batches with a definition diff, output Δ, and commit or reject buttons, plus
-  undo, redo and history.
-- **Analyses UI.** Pick inputs, value lists or ranges, outputs and mode. ECharts renders line
-  plots and heatmaps. Analyses can be saved and re-run.
+  definition, unit, axis, dependencies and dependants (both clickable), status and
+  fingerprint.
+- **Bottom panel.** **Changes** (the latest preview and agents' proposals, each with a
+  definition diff and its effect on key outputs, commit or reject, and the session history
+  with rollback), problems, an `fm` terminal (xterm.js) and logs. Undo and redo sit in the
+  top bar.
 
 ## 10. Sample LBO (`examples/lbo`)
 
@@ -359,10 +376,10 @@ history endpoints.
 | M6 | Custom functions in a sandboxed worker (CPU, memory, timeout, import allowlist) | done |
 | M7 | run, sweep, analyses, checks, plus the `fm` CLI with `--json` | done |
 | M8 | Sample LBO (`examples/lbo`) and golden tests against an independent calculation | done |
-| M9 | FastAPI server as the session owner (undo, pending), CLI-to-server routing via lock file, websocket events, file watcher, terminal endpoint | next |
-| M10 | Vite app scaffold, UI shell, explorer, graph view, inspector | |
-| M11 | Editors (metric, table, source, function, JSON), analyses UI, Changes panel | |
-| M12 | Hardening: performance pass (sweeps of 1k scenarios), docs, agent guide | |
+| M9 | FastAPI server as the session owner (undo, pending), CLI-to-server routing via lock file, websocket events, file watcher, terminal endpoint | done |
+| M10 | Vite app scaffold, UI shell, explorer, graph view, inspector | done |
+| M11 | Editors (metric, table, source, function, JSON), analyses UI, Changes panel, terminal, Playwright end-to-end tests | done |
+| M12 | Hardening: performance pass (sweeps of 1k scenarios), docs, agent guide | next |
 
 The backend (M0–M9) is usable headless by agents before any UI work starts.
 
@@ -380,9 +397,23 @@ The backend (M0–M9) is usable headless by agents before any UI work starts.
   talking framed pickle over pipes. `multiprocessing` spawn would re-import the caller's
   main script. Module-level imports in function code are moved to the top of
   `functions.py`.
-- **Session commands.** CLI history, undo, redo, rollback and pending commands report that
-  they need `fm serve`, until M9 provides the session.
+- **Session commands.** CLI history, undo, redo, rollback and pending commands need a
+  running `fm serve`; without one they say so.
 - **Cache directory.** Unpacked model directories write `cache/`; it is git-ignored.
+
+### Notes from building M9–M11
+
+- **Shutdown.** uvicorn re-raises SIGTERM and SIGINT after it stops, so code after
+  `server.run()` never runs. Session cleanup (lock file, cache, function worker) happens in
+  the app's lifespan instead. Websocket handlers must also watch for disconnects, or shutdown
+  waits on them forever.
+- **Forwarded commands.** `fm` commands forwarded to a session run in-process against the
+  session's workspace, so they share its undo history and pending proposals. `--help`,
+  `serve`, `init`, `pack` and `unpack` always run locally.
+- **Graph overview.** Models with more than 40 metrics open with their groups collapsed;
+  expanding a group zooms to it.
+- **Monaco.** Bundled locally with only the editor core, Python and JSON, since the UI runs
+  offline next to the model.
 
 ## 12. Risks
 

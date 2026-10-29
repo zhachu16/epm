@@ -1,13 +1,45 @@
 import { useMemo, useState } from "react";
 import type { AppState } from "../api/types";
 import { buildTree, countLeaves, type TreeNode } from "../lib/tree";
-import { useStore } from "../store";
+import { type TabKind, useStore } from "../store";
+
+const NEW_KINDS: [TabKind, string][] = [
+  ["metric", "Metric"],
+  ["table", "Table"],
+  ["analysis", "Analysis"],
+  ["check", "Check"],
+  ["function", "Function"],
+  ["source", "Source"],
+  ["circularity", "Circularity"],
+  ["axis", "Axis"],
+];
+
+/** Names already taken by objects of ``kind``. */
+function existing(state: AppState, kind: TabKind): string[] {
+  const m = state.model;
+  if (kind === "function") return state.functions.map((f) => f.name);
+  const collection = { metric: m.metrics, table: m.tables, analysis: m.analyses, check: m.checks, source: m.sources, circularity: m.circularities, axis: m.axes }[
+    kind as string
+  ];
+  return Object.keys(collection ?? {});
+}
 
 export function Explorer({ state }: { state: AppState }) {
   const [query, setQuery] = useState("");
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const tree = useMemo(() => buildTree(state, query.trim()), [state, query]);
-  const { open, selected } = useStore();
+  const { open, selected, log } = useStore();
+
+  const create = (kind: TabKind) => {
+    const name = window.prompt(`Name of the new ${kind}:`)?.trim();
+    if (!name) return;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      log("error", `'${name}' is not a valid name: use letters, digits and underscores`);
+      return;
+    }
+    if (existing(state, kind).includes(name)) log("warning", `${kind} '${name}' already exists; opening it`);
+    open(kind, name);
+  };
 
   const toggle = (id: string) =>
     setClosed((prev) => {
@@ -51,7 +83,23 @@ export function Explorer({ state }: { state: AppState }) {
 
   return (
     <div className="panel">
-      <div className="panel-header">Explorer</div>
+      <div className="panel-header">
+        Explorer
+        <select
+          className="new-object"
+          value=""
+          onChange={(e) => e.target.value && create(e.target.value as TabKind)}
+          title="Create a new object"
+          data-testid="explorer-new"
+        >
+          <option value="">+ New</option>
+          {NEW_KINDS.map(([kind, label]) => (
+            <option key={kind} value={kind}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </div>
       <div className="search">
         <input
           placeholder="Search metrics, tables, formulas…"

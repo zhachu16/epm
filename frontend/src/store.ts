@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import type { BatchResult } from "./api/types";
 
+export interface Preview {
+  result: BatchResult;
+  commit?: () => Promise<unknown>; // re-run the same change for real
+}
+
 export type TabKind =
   | "metric"
   | "table"
@@ -39,7 +44,7 @@ interface Store {
   selected: Selection | null;
   bottom: BottomTab;
   logs: LogEntry[];
-  preview: BatchResult | null; // the latest dry-run from an editor, shown in Changes
+  preview: Preview | null; // the latest dry-run from an editor, shown in Changes
   collapsed: string[]; // collapsed graph groups
   graphInitialised: boolean; // the overview default has been applied once
   connected: boolean;
@@ -49,7 +54,7 @@ interface Store {
   select: (selection: Selection | null) => void;
   setBottom: (tab: BottomTab) => void;
   log: (level: string, message: string, at?: number) => void;
-  setPreview: (preview: BatchResult | null) => void;
+  setPreview: (preview: Preview | null) => void;
   toggleGroup: (group: string) => void;
   setCollapsed: (groups: string[]) => void;
   setConnected: (connected: boolean) => void;

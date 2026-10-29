@@ -103,7 +103,9 @@ class FunctionRuntime:
             self._proc.wait(5)
             for stream in (self._proc.stdin, self._proc.stdout):
                 if stream is not None:
-                    stream.close()
+                    # closing flushes, which fails if the worker died first (Ctrl+C reaches it too)
+                    with contextlib.suppress(OSError):
+                        stream.close()
         self._proc = self._channel = None
 
     def close(self) -> None:

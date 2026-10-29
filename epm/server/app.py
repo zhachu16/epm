@@ -7,6 +7,7 @@ except for ``/api/health``, carry the session token: the ``X-EPM-Token`` header,
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import html
 import json
@@ -290,14 +291,25 @@ def create_app(
         if not await accept(ws):
             return
         queue = session.events.subscribe()
-        try:
+
+        async def forward() -> None:
             await ws.send_json({"type": "hello", "version": session.ws.version})
             while True:
-                event = await queue.get()
-                await ws.send_json(event)
-        except (WebSocketDisconnect, RuntimeError):
-            pass
+                await ws.send_json(await queue.get())
+
+        async def until_closed() -> None:
+            # Clients send nothing here, but receiving is how a disconnect (or the server
+            # shutting down) is noticed; without it the handler would wait on the queue forever.
+            while (await ws.receive())["type"] != "websocket.disconnect":
+                pass
+
+        tasks = [asyncio.create_task(forward()), asyncio.create_task(until_closed())]
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             session.events.unsubscribe(queue)
 
     @app.websocket("/api/terminal")

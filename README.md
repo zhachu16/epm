@@ -9,10 +9,10 @@ See [`docs/PLAN.md`](docs/PLAN.md) for the full design and milestones.
 
 ## Status
 
-Milestones M0–M8 are done: the engine, sources, solver, archives and cache, editing
-operations, custom functions, sweeps and analyses, the `fm` CLI, and a complete sample LBO.
-Still to come: the server (`fm serve`, which also holds undo history and pending proposals)
-and the web UI.
+Milestones M0–M11 are done: the engine, sources, solver, archives and cache, editing
+operations, custom functions, sweeps and analyses, the `fm` CLI, a complete sample LBO, the
+`fm serve` session server and the web UI. Next is hardening (M12): performance, docs and an
+agent guide.
 
 ## Quick start
 
@@ -49,6 +49,26 @@ fm -m examples/lbo trace ebit --upstream
 ```
 
 Add `--json` to any command for a `{ok, data, errors, warnings}` envelope.
+
+## Web UI
+
+The UI lives in [`frontend/`](frontend), a standalone Vite + React app. Build it once:
+
+```bash
+cd frontend && npm ci && npm run build
+```
+
+Then serve a model and open the printed URL:
+
+```bash
+fm -m examples/lbo serve --open
+```
+
+`fm serve` holds the session: undo and redo history, and proposals waiting for review.
+While it runs, `fm` commands for that model run inside the session, so edits from the CLI,
+agents and the browser share one history and appear live in the UI. Agents propose changes
+with `fm apply changes.json --propose`; they show up in the **Changes** panel with a diff
+and their effect on key outputs, ready to commit or reject.
 
 ## Building a model
 

@@ -272,3 +272,15 @@ def test_lock_helpers(model):
         ["run", "-o", "a"],
     )
     assert split_global(["--model=y", "list"]) == ("y", ["list"])
+
+
+def test_shutdown_does_not_wait_on_open_event_streams(model):
+    from websockets.sync.client import connect
+
+    with ServerThread(model) as srv:
+        url = f"ws://127.0.0.1:{srv.port}/api/events?token={srv.session.token}"
+        with connect(url) as ws:
+            assert json.loads(ws.recv(timeout=5))["type"] == "hello"
+            srv.server.should_exit = True
+            srv.thread.join(10)
+            assert not srv.thread.is_alive()

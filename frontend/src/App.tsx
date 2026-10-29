@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useServerEvents } from "./api/events";
 import { useAppState } from "./api/hooks";
@@ -6,10 +7,14 @@ import { Center } from "./components/Center";
 import { Explorer } from "./components/Explorer";
 import { Inspector } from "./components/Inspector";
 import { TopBar } from "./components/TopBar";
+import { setFormulaContext } from "./lib/monaco";
 
 export default function App() {
   useServerEvents();
   const { data: state, error, isLoading } = useAppState();
+  useEffect(() => {
+    if (state) setFormulaContext(state);
+  }, [state]);
 
   if (isLoading) return <div className="empty">Loading model…</div>;
   if (error || !state) {

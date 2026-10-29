@@ -47,5 +47,7 @@ npm test
 npm run e2e
 ```
 
-`npm run e2e` builds nothing itself: build first, and it starts `fm serve` on a copy of the
-sample LBO.
+`npm run e2e` runs the Playwright tests against the built app: run `npm run build` first. It
+starts `fm serve` on a scratch copy of the sample LBO using `python3`, or the interpreter in
+`EPM_PYTHON`, which needs epm installed. Install a browser once with
+`npx playwright install chromium`.

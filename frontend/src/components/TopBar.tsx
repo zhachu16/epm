@@ -42,6 +42,7 @@ export function TopBar({ state }: { state: AppState }) {
         className={`pill ${errors ? "error" : warnings ? "warn" : ""}`}
         onClick={() => setBottom("problems")}
         title="Problems"
+        data-testid="problems-pill"
       >
         {errors} errors · {warnings} warnings
       </button>

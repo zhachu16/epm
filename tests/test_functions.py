@@ -214,6 +214,15 @@ def sneaky(x):
         rt.close()
 
 
+def test_close_after_the_worker_died():
+    # Ctrl+C or a SIGTERM to the process group stops the worker before the runtime closes it
+    rt = FunctionRuntime(SOURCE)
+    assert rt.call("moic", [100.0, 250.0], {}) == 2.5
+    rt._proc.kill()
+    rt._proc.wait()
+    rt.close()
+
+
 def test_load_errors_are_reported():
     rt = FunctionRuntime("raise RuntimeError('boom')\n")
     with pytest.raises(FunctionCallError, match="failed to load: RuntimeError: boom"):
