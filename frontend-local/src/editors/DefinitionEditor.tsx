@@ -7,6 +7,8 @@ import { CodeEditor } from "./CodeEditor";
 import { ActionBar, errorsOf, RenameDelete, useDraft, withCleared } from "./common";
 
 const COLLECTION: Record<string, keyof AppState["model"]> = {
+  metric: "metrics",
+  table: "tables",
   check: "checks",
   circularity: "circularities",
   axis: "axes",
@@ -15,12 +17,14 @@ const COLLECTION: Record<string, keyof AppState["model"]> = {
 };
 
 const TEMPLATES: Record<string, unknown> = {
+  metric: { value: 0 },
+  table: { rows: [] },
   check: { expr: "total_assets - total_liabilities_and_equity", tolerance: 1e-6 },
   circularity: { metrics: [] },
   axis: { values: [2024, 2025, 2026], historical: [2024] },
 };
 
-/** JSON editing of a definition, for kinds without a dedicated form. */
+/** JSON editing of a definition: for kinds without a form, and the JSON view of the others. */
 export function DefinitionEditor({ state, kind, name }: { state: AppState; kind: TabKind; name: string }) {
   const isSettings = kind === "settings";
   const current = isSettings

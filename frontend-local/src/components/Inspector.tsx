@@ -1,6 +1,7 @@
 import type { AppState, MetricInfo } from "../api/types";
 import { formatNumber, headline, seriesEntries } from "../lib/format";
 import { type Selection, type TabKind, useStore } from "../store";
+import { ActionPanel } from "./ActionPanel";
 import { Sparkline } from "./Sparkline";
 
 export function Inspector({ state }: { state: AppState }) {
@@ -8,6 +9,7 @@ export function Inspector({ state }: { state: AppState }) {
   return (
     <div className="panel">
       <div className="panel-header">Inspector</div>
+      <ActionPanel />
       <div className="panel-body" data-testid="inspector">
         {!selected ? (
           <div className="empty">Select a metric in the graph or explorer to see its value, definition and dependencies.</div>

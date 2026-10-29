@@ -1,8 +1,10 @@
 """Service configuration.
 
-The alpha keeps credentials here, in code, on purpose: fill in the placeholders by hand.
-Anyone who can read this repository can read them, so rotate them and move them to
-environment variables before the repository or the app is shared further.
+The alpha keeps credentials here, in code, on purpose. On `main` this file keeps its
+placeholders; the real values live only in the copy on the `web-backend` branch, which
+`scripts/split-branches.sh` never overwrites. Settings added here must be added to that copy
+by hand. Anyone who can read the repository can read the credentials, so rotate them and move
+them to environment variables before the repository or the app is shared further.
 """
 
 from __future__ import annotations

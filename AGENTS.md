@@ -84,5 +84,7 @@ CI runs all of these. The end-to-end tests need the built UI and a Chromium for 
 - **Change `main`, not the deployment branches.** `local-app`, `web-frontend` and
   `web-backend` are rebuilt from `main` after CI passes; edits made on them are overwritten.
   Their READMEs are `scripts/branch-readmes/<branch>.md`; the local-app one is tested like
-  `README.md`.
+  `README.md`. The exception is `service/config.py` on `web-backend`: it holds the
+  deployment's credentials, is edited there only, and is kept when the branch is rebuilt.
+  Never put real credentials on `main`.
 - **Style.** Ruff with a line length of 100. Comments explain why, not what.

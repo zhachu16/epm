@@ -5,7 +5,9 @@
 #   web-frontend  frontend-web, deployed by Vercel
 #   web-backend   epm and service/, deployed by Render (render.yaml)
 #
-# Each branch gets its own README.md, from scripts/branch-readmes/<branch>.md.
+# Each branch gets its own README.md, from scripts/branch-readmes/<branch>.md. A branch's
+# own files (OWN) are kept from the branch itself: web-backend's service/config.py holds the
+# deployment's credentials, which main never sees.
 #
 # main stays the one place where changes are made; these branches are generated, never
 # edited. Each run adds a commit on top of a branch (no force-push) when its files changed.
@@ -22,6 +24,9 @@ declare -A KEEP=(
   [web-frontend]="frontend-web docs .gitignore"
   [web-backend]="epm service examples docs pyproject.toml render.yaml .dockerignore .gitignore"
 )
+declare -A OWN=(
+  [web-backend]="service/config.py"
+)
 
 source_sha=$(git rev-parse --verify "$source_ref^{commit}")
 index=$(mktemp)
@@ -35,9 +40,14 @@ for branch in local-app web-frontend web-backend; do
     | GIT_INDEX_FILE=$index git update-index --index-info
   readme=$(git rev-parse "$source_sha:scripts/branch-readmes/$branch.md")
   GIT_INDEX_FILE=$index git update-index --add --cacheinfo "100644,$readme,README.md"
+  parent=$(git rev-parse -q --verify "refs/remotes/$remote/$branch" || true)
+  for owned in ${OWN[$branch]:-}; do
+    if [[ -n $parent ]] && blob=$(git rev-parse -q --verify "$parent:$owned"); then
+      GIT_INDEX_FILE=$index git update-index --add --cacheinfo "100644,$blob,$owned"
+    fi
+  done
   tree=$(GIT_INDEX_FILE=$index git write-tree)
 
-  parent=$(git rev-parse -q --verify "refs/remotes/$remote/$branch" || true)
   if [[ -n $parent && $(git rev-parse "$parent^{tree}") == "$tree" ]]; then
     echo "$branch: up to date"
     continue

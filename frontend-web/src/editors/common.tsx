@@ -2,25 +2,36 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { Mode } from "../api/client";
 import { useApply } from "../api/hooks";
 import type { BatchResult, Op, OpKind } from "../api/types";
-import { type TabKind, useStore } from "../store";
+import { type ExtraAction, type TabKind, useStore } from "../store";
 
-/** Preview / Save / Revert, plus the errors from the last attempt. */
+/**
+ * Hands the open editor's Preview / Save / Revert (and Run, where there is one) to the
+ * action panel above the inspector, which shows them, their errors and the keyboard
+ * shortcuts. Renders nothing in the editor itself; ``extras`` are more buttons for the panel.
+ */
 export function ActionBar({
   dirty,
   onSubmit,
   onRevert,
   errors,
-  children,
+  onRun,
+  running,
+  runDisabled,
+  extras,
 }: {
   dirty: boolean;
   onSubmit: (mode: Mode) => Promise<unknown>;
   onRevert?: () => void;
   errors: string[];
-  children?: React.ReactNode;
+  onRun?: () => void;
+  running?: boolean;
+  runDisabled?: boolean;
+  extras?: ExtraAction[];
 }) {
   const [busy, setBusy] = useState(false);
-  const readOnly = useStore((s) => s.readOnly);
+  const setEditorActions = useStore((s) => s.setEditorActions);
   const run = async (mode: Mode) => {
+    if (busy) return;
     setBusy(true);
     try {
       await onSubmit(mode);
@@ -28,37 +39,23 @@ export function ActionBar({
       setBusy(false);
     }
   };
-  return (
-    <>
-      <div className="row">
-        <button className="btn" disabled={!dirty || busy} onClick={() => run("dry_run")} data-testid="preview" title="Show the change and its effect without saving">
-          Preview
-        </button>
-        <button
-          className="btn primary"
-          disabled={!dirty || busy || readOnly}
-          onClick={() => run("commit")}
-          title={readOnly ? "Read-only: make an editable copy to change it" : "Save a new version"}
-          data-testid="save"
-        >
-          Save
-        </button>
-        {onRevert && (
-          <button className="btn" disabled={!dirty || busy} onClick={onRevert}>
-            Revert
-          </button>
-        )}
-        {children}
-      </div>
-      {errors.length > 0 && (
-        <div className="message error" data-testid="editor-errors">
-          {errors.map((e, i) => (
-            <div key={i}>{e}</div>
-          ))}
-        </div>
-      )}
-    </>
-  );
+  // every render: the handlers close over the editor's latest draft
+  useEffect(() => {
+    setEditorActions({
+      dirty,
+      busy,
+      errors,
+      preview: () => void run("dry_run"),
+      save: () => void run("commit"),
+      revert: onRevert,
+      run: onRun,
+      running,
+      runDisabled,
+      extras,
+    });
+  });
+  useEffect(() => () => setEditorActions(null), [setEditorActions]);
+  return null;
 }
 
 export function errorsOf(result: BatchResult): string[] {

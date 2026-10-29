@@ -153,3 +153,67 @@ test("shows the docs", async ({ page }) => {
   await page.goto("/docs/agent-guide#diagnostics");
   await expect(page.locator("#diagnostics")).toBeVisible();
 });
+
+test("saves a new analysis built in the form", async ({ page, request }) => {
+  const id = await copyExample(request, "New analysis");
+  await openProject(page, id);
+  page.once("dialog", (dialog) => dialog.accept("tax_check"));
+  await page.getByTestId("explorer-new").selectOption("analysis");
+  const editor = page.getByTestId("analysis-editor");
+  await editor.getByRole("button", { name: "Add input" }).click();
+  await editor.locator("select").filter({ hasText: "metric…" }).selectOption("tax_rate");
+  await editor.getByPlaceholder("0.04, 0.06, 0.08").fill("0.2, 0.3");
+  await editor.locator("select").filter({ hasText: "add output…" }).selectOption("equity_irr");
+  await page.getByTestId("save").click();
+  await expect(page.getByTestId("save-status")).toHaveText("Saved · v2");
+  await expect(page.getByTestId("editor-errors")).toBeHidden();
+  await page.keyboard.press("ControlOrMeta+Enter"); // the Run shortcut
+  await expect(page.locator('[data-testid="analysis-results"] tbody tr')).toHaveCount(2);
+});
+
+test("the inspector follows the active tab", async ({ page, request }) => {
+  const id = await copyExample(request, "Tabs");
+  await openProject(page, id);
+  const heading = page.locator('[data-testid="inspector"] h2');
+  await openFromExplorer(page, "metric:tax_rate", "tax_rate");
+  await openFromExplorer(page, "table:income_statement", "income_statement");
+  await expect(heading).toHaveText("income_statement");
+  await page.getByTestId("tab-metric:tax_rate").click();
+  await expect(heading).toHaveText("tax_rate");
+});
+
+test("edits a definition as JSON and saves it with the keyboard", async ({ page, request, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const id = await copyExample(request, "JSON");
+  await openProject(page, id);
+  await openFromExplorer(page, "metric:tax_rate", "tax_rate");
+  await page.getByTestId("view-json").click();
+  await expect(page.getByTestId("definition-json")).toContainText('"value": 0.25');
+  await page.locator('[data-testid="definition-json"] .monaco-editor').click();
+  await page.keyboard.press("ControlOrMeta+A");
+  // pasted, not typed: Monaco would auto-close the brackets and quotes as they are typed
+  const json = '{"unit": "%", "folder": "Assumptions/Operations", "value": 0.3}';
+  await page.evaluate((text) => navigator.clipboard.writeText(text), json);
+  await page.keyboard.press("ControlOrMeta+V");
+  await page.keyboard.press("ControlOrMeta+S");
+  await expect(page.getByTestId("save-status")).toHaveText("Saved · v2");
+  await expect(page.getByTestId("inspector-value")).toHaveText("30.0%");
+  await page.getByTestId("view-form").click();
+  await expect(page.getByTestId("metric-value")).toHaveValue("0.3");
+});
+
+test("drags graph nodes, and resets the layout", async ({ page, request }) => {
+  const id = await copyExample(request, "Graph");
+  await openProject(page, id);
+  await expect(page.locator(".react-flow__minimap")).toHaveCount(0);
+  const node = page.locator('[data-testid="graph"] .react-flow__node').first();
+  const laidOut = await node.evaluate((el) => (el as HTMLElement).style.transform);
+  const before = (await node.boundingBox())!;
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(before.x + before.width / 2 + 120, before.y + before.height / 2 + 90, { steps: 8 });
+  await page.mouse.up();
+  expect((await node.boundingBox())!.x - before.x).toBeGreaterThan(60);
+  await page.getByTestId("reset-layout").click();
+  await expect.poll(() => node.evaluate((el) => (el as HTMLElement).style.transform)).toBe(laidOut);
+});

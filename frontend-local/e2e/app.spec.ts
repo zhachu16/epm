@@ -111,7 +111,7 @@ test("reviews and commits an agent's proposal", async ({ page, request }) => {
 test("runs an analysis and charts it", async ({ page }) => {
   await openApp(page);
   await openFromExplorer(page, "analysis:entry_exit_irr");
-  await page.getByTestId("run-analysis").click();
+  await page.keyboard.press("ControlOrMeta+Enter"); // the Run shortcut
   await expect(page.getByTestId("chart")).toBeVisible();
   await expect(page.locator('[data-testid="analysis-results"] tbody tr')).toHaveCount(25);
 });
@@ -123,4 +123,77 @@ test("shows tables and the raw model files", async ({ page }) => {
 
   await openFromExplorer(page, "file:model.json");
   await expect(page.getByTestId("file-model.json")).toContainText("Project Atlas LBO");
+});
+
+test("saves a new analysis built in the form", async ({ page }) => {
+  await openApp(page);
+  page.once("dialog", (dialog) => dialog.accept("tax_check"));
+  await page.getByTestId("explorer-new").selectOption("analysis");
+  const editor = page.getByTestId("analysis-editor");
+  await editor.getByRole("button", { name: "Add input" }).click();
+  await editor.locator("select").filter({ hasText: "metric…" }).selectOption("tax_rate");
+  await editor.getByPlaceholder("0.04, 0.06, 0.08").fill("0.2, 0.3");
+  await editor.locator("select").filter({ hasText: "add output…" }).selectOption("equity_irr");
+  await expect(page.getByTestId("action-status")).toHaveText("Unsaved changes");
+  await page.getByTestId("save").click();
+  await expect(page.getByTestId("action-status")).toHaveText("No unsaved changes");
+  await expect(page.getByTestId("editor-errors")).toBeHidden();
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByTestId("delete").click();
+  await expect(page.getByTestId("tab-analysis:tax_check")).toBeHidden();
+});
+
+test("the inspector follows the active tab", async ({ page }) => {
+  await openApp(page);
+  const heading = page.locator('[data-testid="inspector"] h2');
+  await openFromExplorer(page, "metric:tax_rate", "tax_rate");
+  await openFromExplorer(page, "table:income_statement", "income_statement");
+  await expect(heading).toHaveText("income_statement");
+  await page.getByTestId("tab-metric:tax_rate").click();
+  await expect(heading).toHaveText("tax_rate");
+  await page.getByTestId("tab-table:income_statement").click();
+  await expect(heading).toHaveText("income_statement");
+});
+
+test("edits a definition as JSON and saves it with the keyboard", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await openApp(page);
+  await openFromExplorer(page, "metric:tax_rate", "tax_rate");
+  await page.getByTestId("view-json").click();
+  await expect(page.getByTestId("definition-json")).toContainText('"value": 0.25');
+  await page.locator('[data-testid="definition-json"] .monaco-editor').click();
+  await page.keyboard.press("ControlOrMeta+A");
+  // pasted, not typed: Monaco would auto-close the brackets and quotes as they are typed
+  const json = '{"unit": "%", "folder": "Assumptions/Operations", "value": 0.3}';
+  await page.evaluate((text) => navigator.clipboard.writeText(text), json);
+  await page.keyboard.press("ControlOrMeta+V");
+  await page.keyboard.press("ControlOrMeta+S");
+  await expect(page.getByTestId("inspector-value")).toHaveText("30.0%");
+  await expect(page.getByTestId("action-status")).toHaveText("No unsaved changes");
+
+  await page.getByTestId("view-form").click();
+  await expect(page.getByTestId("metric-value")).toHaveValue("0.3");
+  await page.getByTestId("undo").click();
+  await expect(page.getByTestId("inspector-value")).toHaveText("25.0%");
+});
+
+test("drags graph nodes, and resets the layout", async ({ page }) => {
+  await openApp(page);
+  await expect(page.locator(".react-flow__minimap")).toHaveCount(0);
+  const node = page.locator('[data-testid="graph"] .react-flow__node').first();
+  // where the layout puts it, in graph coordinates, whatever the zoom and pan
+  const laidOut = await node.evaluate((el) => (el as HTMLElement).style.transform);
+  const before = (await node.boundingBox())!;
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(before.x + before.width / 2 + 120, before.y + before.height / 2 + 90, { steps: 8 });
+  await page.mouse.up();
+  const after = (await node.boundingBox())!;
+  expect(after.x - before.x).toBeGreaterThan(60);
+  await expect(page.getByTestId("reset-layout")).toBeEnabled();
+
+  await page.getByTestId("reset-layout").click();
+  await expect.poll(() => node.evaluate((el) => (el as HTMLElement).style.transform)).toBe(laidOut);
+  await expect(page.getByTestId("reset-layout")).toBeDisabled();
 });

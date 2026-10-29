@@ -30,6 +30,54 @@ export interface Selection {
   name: string;
 }
 
+/** An editor-specific button in the action panel: a link (``href``) or an action. */
+export interface ExtraAction {
+  id: string;
+  label: string;
+  title?: string;
+  disabled?: boolean;
+  href?: string;
+  onClick?: () => void;
+}
+
+/**
+ * What the open editor offers: the action panel above the inspector shows these, and the
+ * keyboard shortcuts trigger them.
+ */
+export interface EditorActions {
+  dirty: boolean;
+  busy: boolean;
+  errors: string[];
+  preview: () => void;
+  save: () => void;
+  revert?: () => void;
+  run?: () => void;
+  running?: boolean;
+  runDisabled?: boolean;
+  extras?: ExtraAction[];
+}
+
+/** What the action panel shows; handlers are left out, as they change on every render. */
+const shown = (a: EditorActions) =>
+  JSON.stringify([
+    a.dirty,
+    a.busy,
+    a.errors,
+    Boolean(a.revert),
+    Boolean(a.run),
+    a.running,
+    a.runDisabled,
+    (a.extras ?? []).map((e) => [e.id, e.label, e.title, e.disabled, e.href]),
+  ]);
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+/** Tabs whose object the inspector can show; the file tabs have nothing to inspect. */
+const inspectable = (kind: TabKind) => kind !== "model.json" && kind !== "functions.py";
+
 export type BottomTab = "changes" | "problems" | "versions" | "files" | "outputs" | "logs";
 
 export interface LogEntry {
@@ -54,6 +102,9 @@ interface Store {
   logs: LogEntry[];
   preview: Preview | null; // the latest dry-run from an editor, shown in Changes
   collapsed: string[]; // collapsed graph groups
+  positions: Record<string, Point>; // graph nodes moved by hand, until reload
+  editorActions: EditorActions | null;
+  jsonView: Record<string, boolean>; // tabs showing their definition as JSON
   graphInitialised: boolean; // the overview default has been applied once
   readOnly: boolean; // the example project, or an earlier version
   save: SaveStatus;
@@ -67,6 +118,10 @@ interface Store {
   setPreview: (preview: Preview | null) => void;
   toggleGroup: (group: string) => void;
   setCollapsed: (groups: string[]) => void;
+  moveNodes: (positions: Record<string, Point>) => void;
+  resetLayout: () => void;
+  setEditorActions: (actions: EditorActions | null) => void;
+  setJsonView: (id: string, json: boolean) => void;
   renameTab: (kind: TabKind, from: string, to: string) => void;
   setReadOnly: (readOnly: boolean) => void;
   setSave: (save: SaveStatus) => void;
@@ -75,6 +130,13 @@ interface Store {
 }
 
 export const tabId = (kind: TabKind, name: string) => `${kind}:${name}`;
+
+/** Selecting a tab selects its object, so the inspector shows what the editor shows. */
+function follow(tabs: Tab[], id: string | null): { selected?: Selection | null } {
+  const tab = id === null ? undefined : tabs.find((t) => t.id === id);
+  if (!tab) return {}; // the graph keeps the current selection
+  return { selected: inspectable(tab.kind) ? { kind: tab.kind, name: tab.name } : null };
+}
 
 const fresh = {
   tabs: [],
@@ -87,6 +149,9 @@ const fresh = {
   readOnly: false,
   save: { state: "idle" } as SaveStatus,
   dirty: {},
+  positions: {},
+  editorActions: null,
+  jsonView: {},
 };
 
 export const useStore = create<Store>((set) => ({
@@ -106,9 +171,9 @@ export const useStore = create<Store>((set) => ({
       if (s.active === id) {
         active = tabs.length ? tabs[Math.min(index, tabs.length - 1)].id : null;
       }
-      return { tabs, active };
+      return { tabs, active, ...follow(tabs, active) };
     }),
-  activate: (id) => set({ active: id }),
+  activate: (id) => set((s) => ({ active: id, ...follow(s.tabs, id) })),
   select: (selected) => set({ selected }),
   setBottom: (bottom) => set({ bottom }),
   log: (level, message, at) =>
@@ -119,6 +184,20 @@ export const useStore = create<Store>((set) => ({
       collapsed: s.collapsed.includes(group) ? s.collapsed.filter((g) => g !== group) : [...s.collapsed, group],
     })),
   setCollapsed: (collapsed) => set({ collapsed }),
+  moveNodes: (positions) => set((s) => ({ positions: { ...s.positions, ...positions } })),
+  resetLayout: () => set({ positions: {} }),
+  // Editors report their actions on every render. Only a change the panel shows updates the
+  // store; otherwise the fresh handlers replace the old ones in place, without re-rendering
+  // anything (which would re-render the editor, which would report again).
+  setEditorActions: (editorActions) =>
+    set((s) => {
+      if (editorActions && s.editorActions && shown(editorActions) === shown(s.editorActions)) {
+        Object.assign(s.editorActions, editorActions);
+        return s;
+      }
+      return { editorActions };
+    }),
+  setJsonView: (id, json) => set((s) => ({ jsonView: { ...s.jsonView, [id]: json } })),
   renameTab: (kind, from, to) =>
     set((s) => {
       const fromId = tabId(kind, from);
