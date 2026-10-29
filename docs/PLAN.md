@@ -12,6 +12,9 @@ and a structured API that agents can drive.
 | Formula language | A whitelisted subset of Python expressions, parsed with `ast` and compiled to vectorized pandas operations. |
 | AI integration (v1) | CLI and HTTP API only. Agents propose change batches; the UI and CLI review, commit, roll back or undo them. No in-app chat. |
 | Circularity | Undeclared cycles are rejected and the error shows the loop path. Declared cycles are solved by fixed-point iteration. |
+| Archive extension | `.epm` (an ordinary ZIP). |
+| Undo history | Session only. It lives in memory in the `fm serve` process and is never written to the archive. |
+| Debt tranches | Separate 1-D metrics per tranche (`tlb_close`, `notes_close`, `revolver_close`). Totals are explicit formulas. |
 | Stack | Python 3.12+, pandas, numpy, openpyxl, pyarrow, FastAPI, Typer, pydantic v2. Frontend: React, TypeScript, Vite, Monaco, React Flow + elkjs, ECharts, xterm.js, react-resizable-panels, TanStack Query. |
 
 ## Repository layout
@@ -37,7 +40,7 @@ docs/
 
 ## 1. Model format
 
-The package is a ZIP archive with a custom extension (proposed `.fmz`):
+The package is an ordinary ZIP archive with the extension `.epm`:
 
 ```text
 model.json        definitions (authoritative)
@@ -201,19 +204,29 @@ All three surfaces, the UI, the CLI and agents, go through one ops layer:
 - **Rename** rewrites references with an AST-preserving rewrite of every formula, table,
   analysis, check and circularity that uses the name.
 - **Delete** fails while references remain and lists them. `--force` is not offered in v1.
-- **History.** Each committed batch is stored with its inverse batch, for undo and redo.
-  Proposed batches can be held as **pending** (`fm apply changes.json --propose`). A pending
-  batch includes a preview: the definition diff, and the old value, new value and Δ for
-  selected outputs (by default, the outputs of the model's key analyses and checks). The user
-  can commit or reject it from the CLI or the UI. Undo, redo and rollback-to-commit are
-  supported.
+- **Previews.** Any batch can be previewed without committing (`fm apply changes.json
+  --dry-run`). A preview shows the definition diff, and the old value, new value and Δ for
+  selected outputs (by default, the outputs of the model's key analyses and checks).
+- **Session history (in memory only).** History lives in the session, not in the archive.
+  - The `fm serve` process owns the session. It keeps each committed batch with its inverse for
+    undo, redo and rollback, and holds **pending** batches (`fm apply changes.json --propose`)
+    for the user to commit or reject in the UI or CLI.
+  - When a session is running, the CLI finds it through a lock file next to the archive
+    (`.atlas.epm.lock`, holding the port and a token). It then sends commands to the server
+    instead of editing the file directly, so CLI and agent edits join the same undo stack and
+    appear in the UI live.
+  - Without a running session, each CLI command is its own one-batch session. Edits commit
+    straight to the archive, `--propose` behaves like `--dry-run`, and `fm undo`/`fm redo` report
+    that no session is active.
+  - History is lost when the server stops. The archive holds only definitions, inputs,
+    functions and cache.
 
 ## 6. Run, sweep, analyses
 
 Python API:
 
 ```python
-ws = Workspace.open("atlas.fmz")
+ws = Workspace.open("atlas.epm")
 ws.run(overrides={"interest_rate": 0.08}, outputs=["equity_irr"])
 ws.sweep(inputs={"entry_multiple": [9, 10, 11], "exit_multiple": [9, 10, 11]},
          outputs=["equity_irr", "moic"], mode="grid")   # or mode="zip"
@@ -232,7 +245,7 @@ ws.sweep(inputs={"entry_multiple": [9, 10, 11], "exit_multiple": [9, 10, 11]},
 
 ## 7. CLI (`fm`)
 
-The CLI is built with Typer. `fm` uses the `.fmz` in the current directory, or `-m PATH`.
+The CLI is built with Typer. `fm` uses the `.epm` in the current directory, or `-m PATH`.
 `--json` returns a structured envelope: `{ok, data, errors, warnings}`.
 
 ```text
@@ -250,9 +263,9 @@ fm validate
 fm run [--set k=v ...] [--output a,b]
 fm sweep --input "k=v1,v2" [--input ...] --output X [--mode grid|zip]
 fm analysis run NAME [--plot out.png]
-fm apply changes.json [--propose]
+fm apply changes.json [--dry-run | --propose]
 fm pending list|show|commit|reject ID
-fm history | fm undo | fm redo | fm rollback ID
+fm history | fm undo | fm redo | fm rollback ID   # need a running fm serve session
 fm pack DIR / fm unpack FILE DIR
 fm serve [--port 8765]
 ```
@@ -304,7 +317,10 @@ history endpoints.
 - **Operations.** Revenue growth, EBITDA margin, D&A, capex and NWC as % of revenue, and taxes.
 - **Statements.** Integrated income statement, balance sheet and cash-flow statement, with a
   balance check for every period.
-- **Debt.** Mandatory amortization from a custom function, a revolver, and a cash sweep with
+- **Debt.** Each tranche (TLB, senior notes, revolver) is its own set of 1-D metrics
+  (`tlb_open`, `tlb_interest`, `tlb_repayment`, `tlb_close`, and so on), and `total_debt`,
+  `total_interest` and similar totals are explicit formulas. Mandatory TLB amortization comes from a
+  custom function. A cash sweep follows a priority waterfall (revolver, then TLB) with
   **average-balance interest**. This uses the declared circularity
   `interest ↔ sweep ↔ debt_close`.
 - **Returns.** Exit EV, net debt, equity value, IRR and MOIC for 3- and 5-year exits.
@@ -322,11 +338,11 @@ history endpoints.
 | M2 | Sources (CSV/XLSX mapping), history and forecast periods, units and axis validation | Errors for bad references, axes and units |
 | M3 | Declared circular solver, with convergence reporting | Average-interest debt schedule converges; undeclared cycle rejected with path |
 | M4 | Archive I/O, fingerprints, selective recalc, parquet cache | An edit recomputes only the downstream subset (asserted in tests) |
-| M5 | Ops layer: atomic batches, rename/delete semantics, history, pending previews | Property tests: apply followed by inverse is identity |
+| M5 | Ops layer: atomic batches, rename/delete semantics, previews, in-memory session history | Property tests: apply followed by inverse is identity |
 | M6 | Sandboxed function workers | Timeout, memory and CPU limits enforced in tests |
 | M7 | run, sweep, analyses, checks, plus the full `fm` CLI with `--json` | Every listed command works end to end |
 | M8 | Sample LBO and golden tests | Matches the reference values |
-| M9 | FastAPI server, websocket events, file watcher, terminal endpoint | API tests |
+| M9 | FastAPI server as the session owner (undo, pending), CLI-to-server routing via lock file, websocket events, file watcher, terminal endpoint | API tests; a CLI edit while serving is undoable from the UI |
 | M10 | UI shell, explorer, graph view, inspector | Graph renders the LBO; click-through works |
 | M11 | Editors (metric, table, source, function, JSON), analyses UI, Changes panel | A full edit, review and commit loop in Playwright e2e |
 | M12 | Hardening: performance pass (sweeps of 1k scenarios), docs, agent guide | Agent guide (`docs/AGENTS.md`) and CLI reference published |
@@ -343,12 +359,3 @@ The backend (M0–M9) is usable headless by agents before any UI work starts.
   untrusted-code sandbox. Document this clearly.
 - **Solver convergence.** Use damping and a clear failure status, and fall back to
   opening-balance interest if needed.
-
-## Open questions
-
-1. File extension: `.fmz`, or something else?
-2. Undo history: should it persist inside the archive (`history/`, not regenerable), or only
-   per session or in a sidecar?
-3. Multi-dimensional metrics (for example period × tranche) are out of scope per "1-D Series".
-   Do debt tranches stay as separate metrics (`tlb_close`, `notes_close`), or should an
-   `asset`-style axis plus a reduction cover them?
