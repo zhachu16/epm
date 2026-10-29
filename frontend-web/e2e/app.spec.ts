@@ -195,6 +195,8 @@ test("edits a definition as JSON and saves it with the keyboard", async ({ page,
   const json = '{"unit": "%", "folder": "Assumptions/Operations", "value": 0.3}';
   await page.evaluate((text) => navigator.clipboard.writeText(text), json);
   await page.keyboard.press("ControlOrMeta+V");
+  // the clipboard paste lands asynchronously; save once it has
+  await expect(page.getByTestId("action-status")).toHaveText("Unsaved changes");
   await page.keyboard.press("ControlOrMeta+S");
   await expect(page.getByTestId("save-status")).toHaveText("Saved · v2");
   await expect(page.getByTestId("inspector-value")).toHaveText("30.0%");
