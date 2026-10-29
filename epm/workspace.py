@@ -358,3 +358,22 @@ class Workspace:
 
     def trace(self, name: str, direction: str = "upstream", depth: int | None = None):
         return self.engine.trace(name, direction, depth)
+
+    def sweep(
+        self,
+        inputs: Mapping[str, Iterable[float]],
+        outputs: Iterable[str],
+        mode: Literal["grid", "zip"] = "grid",
+        overrides: Mapping[str, Override] | None = None,
+    ):
+        from .analysis import sweep
+
+        values = {k: list(v) for k, v in inputs.items()}
+        return sweep(self.engine, values, list(outputs), mode, overrides, self.cache)
+
+    def run_analysis(self, name: str):
+        from .analysis import run_analysis
+
+        if name not in self.model.analyses:
+            raise EpmError("not_found", f"there is no analysis '{name}'")
+        return run_analysis(self.engine, name, self.model.analyses[name], self.cache)

@@ -1,5 +1,6 @@
 from .io import dump_model, load_model
 from .schema import (
+    Analysis,
     Axis,
     Binding,
     Check,
@@ -13,6 +14,7 @@ from .schema import (
 )
 
 __all__ = [
+    "Analysis",
     "Axis",
     "Binding",
     "Check",

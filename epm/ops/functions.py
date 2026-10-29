@@ -22,7 +22,12 @@ def _tree(source: str) -> ast.Module:
         raise OpFailure("invalid_definition", f"functions.py has a syntax error: {e.msg}") from None
 
 
-def _check_code(code: str, name: str) -> str:
+def _check_code(code: str, name: str) -> tuple[str, list[str]]:
+    """Validate the code of one function; returns its code and any imports to hoist.
+
+    The code holds exactly one ``@function`` named ``name``. Module-level imports are
+    allowed and moved to the top of functions.py; ``from epm import function`` is implied.
+    """
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
@@ -30,13 +35,39 @@ def _check_code(code: str, name: str) -> str:
             "invalid_definition", f"code has a syntax error: {e.msg} (line {e.lineno})"
         ) from None
     defs = function_nodes(tree)
-    others = [n for n in tree.body if not (isinstance(n, ast.FunctionDef) and n.name in defs)]
-    if list(defs) != [name] or others:
+    imports, body = [], []
+    lines = code.splitlines()
+    for node in tree.body:
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            text = "\n".join(lines[node.lineno - 1 : node.end_lineno])
+            if text.strip() != HEADER.strip():
+                imports.append(text)
+        elif not (isinstance(node, ast.FunctionDef) and node.name in defs):
+            body.append(node)
+    if list(defs) != [name] or body:
         raise OpFailure(
             "invalid_definition",
             f"code must contain exactly one function, '{name}', decorated with @function",
         )
-    return code.strip("\n") + "\n"
+    start, end = segment(code, defs[name])
+    return "\n".join(lines[start:end]) + "\n", imports
+
+
+def _hoist(source: str, imports: list[str]) -> str:
+    """Add imports after the existing top-of-file imports, skipping ones already present."""
+    lines = source.splitlines()
+    existing = {line.strip() for line in lines}
+    new = [i for i in imports if i.strip() not in existing]
+    if not new:
+        return source
+    tree = _tree(source)
+    last = 0
+    for node in tree.body:
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            last = node.end_lineno or last
+        else:
+            break
+    return "\n".join([*lines[:last], *new, *lines[last:]]) + "\n"
 
 
 def _check_name(state: State, name: str) -> None:
@@ -63,11 +94,11 @@ def apply_function(state: State, op: Op) -> list[Op]:
 
     if action == "create":
         payload = op.definition if op.op == "create" else op.set
-        code = _check_code((payload or {}).get("code", ""), name)
+        code, imports = _check_code((payload or {}).get("code", ""), name)
         if name in nodes:
             raise OpFailure("already_exists", f"function '{name}' already exists")
         _check_name(state, name)
-        base = source if source.strip() else HEADER
+        base = _hoist(source if source.strip() else HEADER, imports)
         state.functions = _tidy(base.rstrip("\n") + "\n\n\n" + code)
         return [Op(op="delete", kind="function", name=name)]
 
@@ -77,8 +108,9 @@ def apply_function(state: State, op: Op) -> list[Op]:
     old_code = "\n".join(lines[start:end]) + "\n"
 
     if action == "update":
-        code = _check_code((op.set or {}).get("code", ""), name)
-        state.functions = _tidy("\n".join([*lines[:start], code.rstrip("\n"), *lines[end:]]))
+        code, imports = _check_code((op.set or {}).get("code", ""), name)
+        updated = "\n".join([*lines[:start], code.rstrip("\n"), *lines[end:]]) + "\n"
+        state.functions = _tidy(_hoist(updated, imports))
         return [Op(op="update", kind="function", name=name, set={"code": old_code})]
 
     if action == "delete":

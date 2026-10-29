@@ -115,9 +115,14 @@ def test_recurrence_with_reduction_is_rejected():
     assert {d.code for d in e.diagnostics} == {"circular_reference"}
 
 
-def test_scalar_recurrence_is_rejected():
-    e = make({"x": {"formula": "prev(x, init=1)"}})
-    assert {d.code for d in e.diagnostics} == {"recurrence_axis"}
+def test_self_recurrence_takes_the_default_axis():
+    e = make({"x": {"formula": "prev(x, init=1) * 2"}})
+    assert e.diagnostics == [] and e.shape("x") == "fy"
+    assert list(e.run()["x"]) == [2, 4, 8, 16]
+    # without a default axis there is nothing to step through
+    no_default = Engine(load_model({"metrics": {"x": {"formula": "prev(x, init=1)"}}}))
+    [d] = no_default.diagnostics
+    assert d.code == "recurrence_axis" and "declare an axis" in d.message
 
 
 def test_prev_lag_and_missing_init():

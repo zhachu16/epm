@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from ..model.schema import (
+    Analysis,
     Axis,
     Check,
     Circularity,
@@ -33,6 +34,7 @@ COLLECTIONS: dict[str, tuple[str, type[BaseModel]]] = {
     "table": ("tables", Table),
     "check": ("checks", Check),
     "circularity": ("circularities", Circularity),
+    "analysis": ("analyses", Analysis),
 }
 
 # kind-specific hooks registered by other modules (custom functions, analyses)

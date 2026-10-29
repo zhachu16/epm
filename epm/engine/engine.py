@@ -308,6 +308,10 @@ class Engine:
             if cm.kind == "formula" and cm.node is not None and cm.declared_axis is None
         ]
         env = self._env(None)
+        for cm in pending:
+            # reading its own previous period makes a metric a time series
+            if cm.refs.get(cm.name) and self.default_axis is not None:
+                cm.shape = self.default_axis
         # each metric can rise at most twice (unknown → scalar → axis)
         for _ in range(2 * len(pending) + 1):
             changed = False
@@ -627,6 +631,15 @@ class Engine:
                 self._error(obj, "unknown_axis", f"unknown axis '{table.axis}'")
             self._unknown_refs(obj, [r.metric for r in table.rows if r.metric is not None])
         self._unknown_refs("settings", self.model.settings.key_outputs)
+        for name, analysis in self.model.analyses.items():
+            obj = f"analysis:{name}"
+            self._unknown_refs(obj, [i.metric for i in analysis.inputs])
+            self._unknown_refs(obj, analysis.overrides)
+            for selector in analysis.outputs:
+                try:
+                    self.resolve_output(selector)
+                except EpmError as e:
+                    self._error(obj, e.code, e.message, **e.detail)
 
     # -- queries -----------------------------------------------------------------------
 
@@ -634,6 +647,31 @@ class Engine:
         """The axis of a metric, or ``None`` for a scalar."""
         self._require(name)
         return self.metrics[name].shape  # type: ignore[return-value]
+
+    def resolve_output(self, selector: str) -> tuple[str, Any]:
+        """Parse ``metric`` or ``metric@period`` into a metric and an axis label.
+
+        Sweeps collect one number per output, so a series needs a period.
+        """
+        name, _, period = selector.partition("@")
+        self._require(name)
+        shape = self.metrics[name].shape
+        if not period:
+            if isinstance(shape, str):
+                raise EpmError(
+                    "invalid_output",
+                    f"'{name}' is a series on '{shape}'; pick a period, e.g. "
+                    f"{name}@{self.axes[shape].index[-1]}",
+                )
+            return name, None
+        if not isinstance(shape, str):
+            raise EpmError("invalid_output", f"'{name}' is a scalar; drop '@{period}'")
+        try:
+            return name, self.axes[shape].lookup(period)
+        except KeyError:
+            raise EpmError(
+                "invalid_output", f"'{period}' is not a period of axis '{shape}'"
+            ) from None
 
     def unit(self, name: str) -> str | None:
         """The declared or inferred unit of a metric, or ``None`` if unknown or mixed."""

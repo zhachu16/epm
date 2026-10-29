@@ -57,7 +57,6 @@ def _file_summary(data: bytes) -> dict[str, Any]:
 def diff_states(old: State, new: State, renames: dict[tuple[str, str], str]) -> list[Change]:
     changes: list[Change] = []
     collections = {kind: coll for kind, (coll, _) in COLLECTIONS.items()}
-    collections["analysis"] = "analyses"
     for kind, coll in collections.items():
         a, b = old.model.get(coll, {}), new.model.get(coll, {})
         renamed_origins = set()

@@ -255,6 +255,112 @@ class Check(_Base):
     description: str | None = None
 
 
+class SweepRange(_Base):
+    """Evenly spaced values from ``start`` to ``stop`` inclusive, by ``step`` or ``num``."""
+
+    start: float
+    stop: float
+    step: float | None = None
+    num: int | None = Field(default=None, ge=2, le=10_000)
+
+    @model_validator(mode="after")
+    def _one_spacing(self) -> SweepRange:
+        if (self.step is None) == (self.num is None):
+            raise ValueError("a range needs exactly one of 'step' or 'num'")
+        if self.step is not None:
+            if self.step == 0 or (self.stop - self.start) / self.step < 0:
+                raise ValueError("'step' must move from start towards stop")
+            if abs((self.stop - self.start) / self.step) > 10_000:
+                raise ValueError("a range may have at most 10,000 values")
+        return self
+
+    def values(self) -> list[float]:
+        if self.num is not None:
+            span = self.stop - self.start
+            return [self.start + span * i / (self.num - 1) for i in range(self.num)]
+        n = int(round((self.stop - self.start) / self.step + 1e-9))  # type: ignore[operator]
+        return [round(self.start + i * self.step, 12) for i in range(n + 1)]  # type: ignore[operator]
+
+
+class SweepInput(_Base):
+    metric: str
+    values: list[float] | None = None
+    range: SweepRange | None = None
+
+    @model_validator(mode="after")
+    def _one_source(self) -> SweepInput:
+        if (self.values is None) == (self.range is None):
+            raise ValueError("a sweep input needs exactly one of 'values' or 'range'")
+        if self.values is not None and not self.values:
+            raise ValueError("'values' cannot be empty")
+        return self
+
+    def resolved(self) -> list[float]:
+        return list(self.values) if self.values is not None else self.range.values()  # type: ignore[union-attr]
+
+
+class Plot(_Base):
+    """``line``: x is an input, y the outputs to draw (default all). ``heatmap``: x and y
+    are the two inputs and z is the output shown as colour."""
+
+    kind: Literal["line", "heatmap"]
+    x: str
+    y: str | list[str] | None = None
+    z: str | None = None
+    title: str | None = None
+    format: str | None = None  # Python format spec for values, e.g. ".1%"
+
+
+class Analysis(_Base):
+    """A saved sensitivity: inputs to vary, outputs to collect, and how to plot them.
+
+    Outputs are metric names; for a series metric, pick a period with ``name@period``.
+    ``overrides`` are fixed assumptions applied to every scenario.
+    """
+
+    inputs: list[SweepInput] = Field(min_length=1)
+    outputs: list[str] = Field(min_length=1)
+    mode: Literal["grid", "zip"] = "grid"
+    overrides: dict[str, float | PeriodValues] = Field(default_factory=dict)
+    plot: Plot | None = None
+    folder: str | None = None
+    description: str | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> Analysis:
+        names = [i.metric for i in self.inputs]
+        if len(set(names)) != len(names):
+            raise ValueError("each input metric may appear only once")
+        if self.mode == "zip" and len({len(i.resolved()) for i in self.inputs}) > 1:
+            raise ValueError("in 'zip' mode every input needs the same number of values")
+        if self.plot is not None:
+            p = self.plot
+            if p.x not in names:
+                raise ValueError(f"plot x '{p.x}' must be one of the inputs")
+            if p.kind == "heatmap":
+                if len(names) != 2 or self.mode != "grid":
+                    raise ValueError("a heatmap needs exactly two inputs in 'grid' mode")
+                if not isinstance(p.y, str) or p.y not in names or p.y == p.x:
+                    raise ValueError("heatmap y must be the other input")
+                if p.z is None or p.z not in self.outputs:
+                    raise ValueError("heatmap z must be one of the outputs")
+            else:
+                ys = [p.y] if isinstance(p.y, str) else (p.y or [])
+                missing = [y for y in ys if y not in self.outputs]
+                if missing:
+                    raise ValueError(f"plot y {missing} must be outputs")
+        return self
+
+    def scenario_count(self) -> int:
+        sizes = [len(i.resolved()) for i in self.inputs]
+        if self.mode == "zip":
+            return sizes[0]
+        count = 1
+        for s in sizes:
+            count *= s
+        return count
+
+
 class Model(_Base):
     settings: Settings = Field(default_factory=Settings)
     axes: dict[str, Axis] = Field(default_factory=dict)
@@ -262,9 +368,10 @@ class Model(_Base):
     metrics: dict[str, Metric] = Field(default_factory=dict)
     circularities: dict[str, Circularity] = Field(default_factory=dict)
     tables: dict[str, Table] = Field(default_factory=dict)
+    analyses: dict[str, Analysis] = Field(default_factory=dict)
     checks: dict[str, Check] = Field(default_factory=dict)
 
-    @field_validator("axes", "sources", "circularities", "tables", "checks")
+    @field_validator("axes", "sources", "circularities", "tables", "analyses", "checks")
     @classmethod
     def _names(cls, v: dict, info) -> dict:
         kind = info.field_name.rstrip("s")

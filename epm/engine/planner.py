@@ -99,6 +99,7 @@ def plan(
             message = (
                 "metrics in a period recurrence must all be series on one axis; got "
                 + ", ".join(f"{m}: {describe(shapes[m])}" for m in comp)
+                + "; declare an axis on the metric or set settings.default_axis"
             )
             for name in comp:
                 fail(name, "recurrence_axis", message, {})
