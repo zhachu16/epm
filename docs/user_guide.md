@@ -46,20 +46,19 @@ Copy it. Then follow the steps for the assistant you use.
 
 ### ChatGPT
 
-You need a paid ChatGPT plan, and you have to switch on Developer mode first.
+ChatGPT moves its menus often, so the names below may differ slightly on your screen.
 
 1. Click your name (bottom-left), then **Settings**.
-2. Click **Apps** (older versions call it **Connectors**).
-3. Click **Advanced settings** and switch on **Developer mode**.
-4. Go back and click **Create** (or **Add connector**).
-5. In **Name**, type `epm`.
-6. In **MCP server URL**, paste the link above.
-7. Set authentication to **None** (there is no login yet).
-8. Tick the box saying you trust this app, then click **Create**.
-9. Start a new chat. Click **+**, then **More**, and pick **epm** (in Developer mode).
+2. Find **Apps** (older versions call it **Connectors**).
+3. Click **Create** (or **Add connector** / **New connector**).
+4. In **Name**, type `epm`.
+5. In **MCP server URL**, paste the link above.
+6. Set authentication to **None** (there is no login yet).
+7. Tick the box saying you trust this app, then click **Create**.
+8. Start a new chat. Click **+** and pick **epm**.
 
-Menu names move around. If you can't find something, look for "connectors" or "apps" in
-settings.
+If you don't see a way to add your own connector, look for a **Developer mode** switch
+under **Settings** (try **Advanced settings**) and turn it on first.
 
 ### Check that it works
 
