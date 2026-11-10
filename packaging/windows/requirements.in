@@ -1,0 +1,18 @@
+# What epm.exe is built with: epm's runtime dependencies (pyproject.toml) without pyarrow,
+# which only stores the value cache and would double the program's size, plus PyInstaller,
+# and hatchling to install epm itself (pip install --no-deps --no-build-isolation .) for the
+# checks that compare the program with its source.
+# Lock with:
+#   uv pip compile packaging/windows/requirements.in --python-version 3.13 \
+#     --python-platform x86_64-pc-windows-msvc --generate-hashes \
+#     -o packaging/windows/requirements.txt
+numpy>=2.0
+openpyxl>=3.1
+pandas>=2.2
+pydantic>=2.6
+typer>=0.12
+fastapi>=0.110
+uvicorn>=0.29
+websockets>=12
+pyinstaller>=6.10
+hatchling

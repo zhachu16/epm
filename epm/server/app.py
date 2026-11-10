@@ -73,12 +73,16 @@ def _host(value: str) -> str:
 
 
 def find_frontend(explicit: Path | None = None) -> Path | None:
-    """The built frontend: an explicit path, $EPM_FRONTEND, or frontend-local/dist in a checkout."""
+    """The built frontend: an explicit path, $EPM_FRONTEND, the copy bundled in a frozen
+    program (epm.exe), or frontend-local/dist in a checkout."""
     import os
+    import sys
 
     candidates = [explicit] if explicit else []
     if os.environ.get("EPM_FRONTEND"):
         candidates.append(Path(os.environ["EPM_FRONTEND"]))
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        candidates.append(Path(sys._MEIPASS) / "frontend")
     candidates.append(Path(__file__).resolve().parents[2] / "frontend-local" / "dist")
     for c in candidates:
         if c is not None and (c / "index.html").is_file():

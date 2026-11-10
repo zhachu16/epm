@@ -8,6 +8,8 @@ sweeps recompute only what the swept inputs affect.
 
 from __future__ import annotations
 
+import functools
+import importlib.util
 import io
 import json
 from collections import OrderedDict
@@ -75,9 +77,12 @@ class ValueCache:
         index: dict[str, Any] = {}
         columns: dict[str, dict[str, np.ndarray]] = {}
         axis_labels: dict[str, list] = {}
+        parquet = parquet_available()
         for key in keys:
             entry = self._entries.get(key)
             if entry is None:
+                continue
+            if not parquet and any(isinstance(v, pd.Series) for v in entry.values.values()):
                 continue
             metrics = {}
             for name, st in entry.status.items():
@@ -116,11 +121,12 @@ class ValueCache:
             return 0
         index = json.loads(raw)["steps"]
         frames = {}
-        for path, data in files.items():
-            if path.startswith("cache/axis-") and path.endswith(".parquet"):
-                frames[path[len("cache/axis-") : -len(".parquet")]] = pd.read_parquet(
-                    io.BytesIO(data)
-                )
+        if parquet_available():
+            for path, data in files.items():
+                if path.startswith("cache/axis-") and path.endswith(".parquet"):
+                    frames[path[len("cache/axis-") : -len(".parquet")]] = pd.read_parquet(
+                        io.BytesIO(data)
+                    )
         loaded = 0
         for key, step in index.items():
             entry = _restore(step, frames, axes)
@@ -128,6 +134,13 @@ class ValueCache:
                 self.put(key, entry)
                 loaded += 1
         return loaded
+
+
+@functools.cache
+def parquet_available() -> bool:
+    """Saved series are parquet files, which need pyarrow. Without it (as in the slimmed
+    Windows epm.exe) steps holding series are neither saved nor restored: they recompute."""
+    return importlib.util.find_spec("pyarrow") is not None
 
 
 def _json_number(v: Any) -> Any:

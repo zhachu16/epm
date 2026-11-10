@@ -65,7 +65,8 @@ class State:
 
 def find_model(path: Path | None) -> Path:
     if path is not None:
-        return path
+        # a model.json stands for its folder, the unpacked package it belongs to
+        return path.parent if path.name == "model.json" and path.is_file() else path
     cwd = Path.cwd()
     if (cwd / "model.json").is_file():
         return cwd

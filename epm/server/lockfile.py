@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -53,6 +54,10 @@ def remove_lock(model: str | Path, token: str | None = None) -> None:
 
 
 def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        return _windows_pid_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -60,6 +65,25 @@ def _pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _windows_pid_alive(pid: int) -> bool:
+    # os.kill(pid, 0) would send Ctrl+C to the process group on Windows, not probe it
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    process_query_limited_information, still_active = 0x1000, 259
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return ctypes.get_last_error() == 5  # access denied: it exists, owned by someone else
+    try:
+        code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code)):
+            return True
+        return code.value == still_active
+    finally:
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
 
 
 def base_url(info: dict[str, Any]) -> str:

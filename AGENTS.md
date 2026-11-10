@@ -15,6 +15,7 @@ Notes for agents and people changing this repository. To *use* epm to build mode
 | `epm/sources/`, `epm/package/`, `epm/analysis/` | CSV/XLSX mapping, `.epm` archives, sweeps and analyses. |
 | `epm/cli/`, `epm/server/` | `fm` (Typer) and `fm serve` (FastAPI); the CLI forwards to a running server. |
 | `frontend-local/` | The local app's UI, served by `fm serve`. A standalone Vite + React app with its own `package.json`. |
+| `epm/desktop.py`, `packaging/windows/` | `epm.exe`: the local app, its UI and the example in one Windows program (PyInstaller), built and checked by `.github/workflows/windows-exe.yml`. |
 | `service/` | The cloud service: projects in Supabase and R2, an HTTP API and an MCP endpoint over `epm`. `service/service.py` runs it. |
 | `frontend-web/` | The cloud web app, hosted on Vercel. A standalone Vite + React app, separate from `frontend-local`. |
 | `examples/lbo/` | The sample LBO, checked by golden tests against an independent calculation. |
@@ -52,7 +53,13 @@ cd frontend-web && npm ci && npm run typecheck && npm test && npm run build
 cd frontend-web && EPM_PYTHON=$(which python) npm run e2e
 ```
 
-CI runs all of these. The end-to-end tests need the built UI and a Chromium for Playwright
+```bash
+pyinstaller --clean --noconfirm packaging/windows/epm.spec && python packaging/windows/check_exe.py dist/epm
+```
+
+CI runs all of these; the last one, which builds and checks the single-file program, runs
+on Windows in `.github/workflows/windows-exe.yml`, from the locked dependencies in
+[`packaging/windows/`](packaging/windows/README.md). The end-to-end tests need the built UI and a Chromium for Playwright
 (`npx playwright install chromium`).
 
 ## Conventions
@@ -94,4 +101,10 @@ CI runs all of these. The end-to-end tests need the built UI and a Chromium for 
 - **One name per project.** A project's name and its model's `settings.name` are kept
   equal: creating, copying, importing and renaming a project write it into the model, and a
   batch or restore that changes `settings.name` renames the project.
+- **Frozen and on Windows.** `epm.exe` is epm frozen by PyInstaller: `sys.executable` is the
+  program itself (the function worker starts as `epm.exe --epm-function-worker`), bundled
+  files are under `sys._MEIPASS`, and pyarrow is left out (the value cache then keeps series
+  in memory only). Don't use POSIX-only calls (`select` on pipes, `os.kill(pid, 0)`,
+  `resource`) without a Windows path. A module imported only by name at run time needs a
+  `hiddenimports` entry in `packaging/windows/epm.spec`; `check_exe.py` catches what's missed.
 - **Style.** Ruff with a line length of 100. Comments explain why, not what.

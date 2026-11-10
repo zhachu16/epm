@@ -1,0 +1,80 @@
+name: Windows program
+
+# Builds epm.exe, the local app in one file, from pinned and hash-checked dependencies;
+# checks it the way someone who downloaded it would use it; and publishes it, as an artifact
+# of every run and, for a tag v*, as a release asset with a stable download link.
+on:
+  push:
+    branches: [local-app]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONHASHSEED: "0" # the same bytecode in the bundle from one build to the next
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend-local/package-lock.json
+      - name: Build the web UI
+        working-directory: frontend-local
+        run: |
+          npm ci
+          npm run build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install the locked build tools
+        run: |
+          python -m pip install --require-hashes --no-deps -r packaging/windows/requirements.txt
+          python -m pip install --no-deps --no-build-isolation .
+      - name: Build epm.exe
+        run: pyinstaller --clean --noconfirm packaging/windows/epm.spec
+        env:
+          EPM_BUILD_COMMIT: ${{ github.sha }}
+      - name: Check epm.exe
+        run: python packaging/windows/check_exe.py dist/epm.exe
+      - name: Checksum
+        working-directory: dist
+        run: |
+          sha256sum epm.exe | tee epm.exe.sha256
+          echo "epm.exe is $(( $(stat -c %s epm.exe) / 1048576 )) MB"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: epm-windows-x64
+          path: |
+            dist/epm.exe
+            dist/epm.exe.sha256
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: epm-windows-x64
+          path: dist
+      - name: Attach epm.exe to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "epm $TAG" \
+              --notes "epm.exe: the local app for Windows in one file. See packaging/windows/README.md."
+          gh release upload "$TAG" dist/epm.exe dist/epm.exe.sha256 --repo "$GITHUB_REPOSITORY" --clobber
