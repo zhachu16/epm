@@ -1,4 +1,4 @@
-"""In-memory stores, for tests and for running the service without Supabase or R2."""
+"""In-memory stores, for tests and for running the service without a database or R2."""
 
 from __future__ import annotations
 

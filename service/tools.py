@@ -57,22 +57,27 @@ def _call(fn: Callable[..., Any]) -> Callable[..., Any]:
     return wrapper
 
 
-def _base_url(ctx: Context | None) -> str:
+def _base_url(ctx: Context | None, token: str = "") -> str:
+    """Where the API is reachable, for links in results: the service's address, then the
+    access token when the service has one (see auth.py)."""
+    prefix = f"/{token}" if token else ""
     if deployment.PUBLIC_URL:
-        return deployment.PUBLIC_URL.rstrip("/")
+        return deployment.PUBLIC_URL.rstrip("/") + prefix
     request = getattr(ctx.request_context, "request", None) if ctx is not None else None
     headers = getattr(request, "headers", None)
     if not headers or "host" not in headers:
         return ""
     proto = headers.get("x-forwarded-proto", getattr(request.url, "scheme", "https"))
-    return f"{proto}://{headers['host']}"
+    return f"{proto}://{headers['host']}{prefix}"
 
 
 def _web_link(project_id: str) -> str | None:
     return f"{deployment.WEB_URL.rstrip('/')}/p/{project_id}" if deployment.WEB_URL else None
 
 
-def build_mcp(projects: Projects) -> MCPServer:
+def build_mcp(projects: Projects, token: str = "") -> MCPServer:
+    """The MCP server over ``projects``. ``token`` is the service's access token, if it has
+    one: download links in results carry it."""
     mcp = MCPServer("epm", instructions=INSTRUCTIONS)
 
     def tool(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -242,7 +247,7 @@ def build_mcp(projects: Projects) -> MCPServer:
     def list_outputs(project_id: str, ctx: Context) -> list[dict[str, Any]]:
         """Saved outputs (run and sweep results, analysis results and plots), with download
         URLs."""
-        base = _base_url(ctx)
+        base = _base_url(ctx, token)
         return [
             {**o, "download_url": f"{base}/api/projects/{project_id}/outputs/{o['id']}"}
             for o in projects.list_outputs(project_id)
@@ -252,7 +257,7 @@ def build_mcp(projects: Projects) -> MCPServer:
     def export_project(project_id: str, ctx: Context, version: int | None = None) -> dict[str, Any]:
         """A download URL for the project as a .epm archive (current version by default)."""
         projects.get(project_id)
-        base = _base_url(ctx)
+        base = _base_url(ctx, token)
         query = f"?version={version}" if version is not None else ""
         return {"download_url": f"{base}/api/projects/{project_id}/export{query}"}
 

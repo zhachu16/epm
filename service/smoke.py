@@ -1,6 +1,6 @@
 """Check a deployed service end to end, leaving nothing behind.
 
-    python -m service.smoke https://epm-service.onrender.com
+    python -m service.smoke https://epm.example.com/<token>
 
 Health, the example, a copy of it, a previewed and saved edit, a run, an export, MCP, and
 finally deleting the copy. Exits non-zero at the first failure.

@@ -17,7 +17,7 @@ from service.tools import build_mcp
 
 SKILLS = Path(__file__).resolve().parents[2] / "skills"
 NAMES = ["epm-create-model", "epm-edit-model"]
-CONNECTOR = "https://epm-nm1g.onrender.com/mcp"
+CONNECTOR = "the epm MCP connector"
 
 
 def text(name: str, file: str = "SKILL.md") -> str:

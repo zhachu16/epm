@@ -263,6 +263,18 @@ def test_retention_keeps_recent_and_daily_versions(projects, atlas, stores, monk
     assert summary["backup"] in {k.split("/")[-1][:10] for k in blobs.keys("backups/meta/")}
 
 
+def test_an_empty_service_does_not_overwrite_the_backup(projects, stores):
+    """A service that has lost its records must not replace the backup it needs."""
+    _, blobs = stores
+    blobs.put("backups/meta/2026-03-01.json", b"the good one")
+    summary = projects.maintain(datetime(2026, 3, 1, tzinfo=UTC))  # only the example exists
+    assert summary["backup"] is None
+    assert blobs.get("backups/meta/2026-03-01.json") == b"the good one"
+    projects.duplicate(EXAMPLE_ID, "Atlas")
+    assert projects.maintain(datetime(2026, 3, 1, tzinfo=UTC))["backup"] == "2026-03-01"
+    assert blobs.get("backups/meta/2026-03-01.json") != b"the good one"
+
+
 def test_deleted_projects_are_purged_after_the_grace_period(projects, atlas, stores):
     meta, blobs = stores
     projects.run(atlas, save=True)

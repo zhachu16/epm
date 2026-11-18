@@ -1,40 +1,62 @@
-"""Service configuration.
+"""The deployment's secrets and paths, read from environment variables.
 
-The alpha keeps credentials here, in code, on purpose: fill in the placeholders by hand.
-Anyone who can read this repository can read them, so rotate them and move them to
-environment variables before the repository or the app is shared further.
+Nothing secret is kept in the repository. Set these where the service runs (a ``.env`` file
+for Docker Compose, for example):
+
+    API_TOKEN              the secret in the service's URLs, at least 32 URL-safe characters
+    R2_ACCOUNT_ID          Cloudflare account ID
+    R2_ACCESS_KEY_ID       R2 API token with Object Read & Write on the bucket
+    R2_SECRET_ACCESS_KEY
+    R2_BUCKET              the bucket for model archives, files and outputs (default: epm)
+    EPM_DATA               the directory of the records database (default: data)
+
+Everything that isn't secret is in ``deployment.py``.
 """
 
 from __future__ import annotations
 
-# Supabase: Project Settings → API. Use the service-role key (server-side only).
-SUPABASE_URL = "https://canyjeptahckhsfibvti.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNhbnlqZXB0YWhja2hzZmlidnRpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MzI5NTM2OCwiZXhwIjoyMTA4ODcxMzY4fQ.J8FDhh0L6QUc0u6VQR88CaC213x6uwdMhl_hMqscE18"
+import os
+from dataclasses import dataclass
+from pathlib import Path
 
-# Cloudflare R2: R2 → Manage API tokens (Object Read & Write on the bucket).
-R2_ACCOUNT_ID = "a590271adca2f3691715b191174c8339"
-R2_ACCESS_KEY_ID = "d79580e1fecbfd1eb3b98875e6b7abe8"
-R2_SECRET_ACCESS_KEY = "8a49326b7194332dca0a1390919299e0a1ac594ead41ce1a39ace0cd453eb888"
-R2_BUCKET = "epm"
-
-# The browser origins allowed to call the API. The alpha is open: any origin.
-CORS_ORIGINS = ["*"]
-
-# Where the service and the web app are reachable, for links in MCP results. Empty: the
-# service URL is taken from the request, and project links to the web app are left out.
-PUBLIC_URL = ""
-WEB_URL = ""
-
-# Retention: the newest versions kept per project, then one per day for this many days.
-KEEP_VERSIONS = 50
-KEEP_DAILY_DAYS = 90
-# Deleted projects can be restored for this many days, then they are purged.
-KEEP_DELETED_DAYS = 30
-# How often the retention and backup job runs, in seconds.
-MAINTENANCE_INTERVAL = 24 * 60 * 60
+DATABASE_NAME = "epm.db"
 
 
-def configured() -> bool:
-    """Whether the placeholders have been replaced."""
-    values = [SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, R2_ACCOUNT_ID, R2_ACCESS_KEY_ID]
-    return not any("YOUR-" in v for v in values + [R2_SECRET_ACCESS_KEY])
+@dataclass(frozen=True)
+class Config:
+    api_token: str
+    r2_account_id: str
+    r2_access_key_id: str
+    r2_secret_access_key: str
+    r2_bucket: str
+    data: Path
+
+    @property
+    def database(self) -> Path:
+        return self.data / DATABASE_NAME
+
+    def missing(self) -> list[str]:
+        """The required environment variables that are not set."""
+        required = {
+            "API_TOKEN": self.api_token,
+            "R2_ACCOUNT_ID": self.r2_account_id,
+            "R2_ACCESS_KEY_ID": self.r2_access_key_id,
+            "R2_SECRET_ACCESS_KEY": self.r2_secret_access_key,
+        }
+        return [name for name, value in required.items() if not value]
+
+
+def load(env: dict[str, str] | None = None) -> Config:
+    env = dict(os.environ) if env is None else env
+
+    def get(name: str, default: str = "") -> str:
+        return env.get(name, "").strip() or default
+
+    return Config(
+        api_token=get("API_TOKEN"),
+        r2_account_id=get("R2_ACCOUNT_ID"),
+        r2_access_key_id=get("R2_ACCESS_KEY_ID"),
+        r2_secret_access_key=get("R2_SECRET_ACCESS_KEY"),
+        r2_bucket=get("R2_BUCKET", "epm"),
+        data=Path(get("EPM_DATA", "data")),
+    )
