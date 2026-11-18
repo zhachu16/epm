@@ -3,11 +3,11 @@
 #
 #   local-app     epm, the fm CLI and fm serve with frontend-local
 #   web-frontend  frontend-web, deployed by Vercel
-#   web-backend   epm and service/, deployed by Render (render.yaml)
+#   web-backend   epm and service/, run with Docker on a server (service/Dockerfile)
 #
-# Each branch gets its own README.md, from scripts/branch-readmes/<branch>.md. A branch's
-# own files (OWN) are kept from the branch itself: web-backend's service/config.py holds the
-# deployment's credentials, which main never sees.
+# Each branch gets its own README.md, from scripts/branch-readmes/<branch>.md. Nothing else
+# differs from main: the service's credentials are environment variables on the server, not
+# files in a branch.
 #
 # main stays the one place where changes are made; these branches are generated, never
 # edited. Each run adds a commit on top of a branch (no force-push) when its files changed.
@@ -22,10 +22,7 @@ push=${PUSH:-1}
 declare -A KEEP=(
   [local-app]="epm frontend-local examples tests benchmarks docs AGENTS.md CLAUDE.md pyproject.toml .gitignore"
   [web-frontend]="frontend-web docs .gitignore"
-  [web-backend]="epm service examples docs pyproject.toml render.yaml .dockerignore .gitignore"
-)
-declare -A OWN=(
-  [web-backend]="service/config.py"
+  [web-backend]="epm service examples docs pyproject.toml .dockerignore .gitignore"
 )
 
 source_sha=$(git rev-parse --verify "$source_ref^{commit}")
@@ -41,11 +38,6 @@ for branch in local-app web-frontend web-backend; do
   readme=$(git rev-parse "$source_sha:scripts/branch-readmes/$branch.md")
   GIT_INDEX_FILE=$index git update-index --add --cacheinfo "100644,$readme,README.md"
   parent=$(git rev-parse -q --verify "refs/remotes/$remote/$branch" || true)
-  for owned in ${OWN[$branch]:-}; do
-    if [[ -n $parent ]] && blob=$(git rev-parse -q --verify "$parent:$owned"); then
-      GIT_INDEX_FILE=$index git update-index --add --cacheinfo "100644,$blob,$owned"
-    fi
-  done
   tree=$(GIT_INDEX_FILE=$index git write-tree)
 
   if [[ -n $parent && $(git rev-parse "$parent^{tree}") == "$tree" ]]; then

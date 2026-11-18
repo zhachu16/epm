@@ -795,9 +795,15 @@ class Projects:
                 purged.append(project.id)
         for project in self.meta.list_projects(limit=10_000):
             pruned += self._prune(project, now)
-        stamp = now.strftime("%Y-%m-%d")
-        backup = json.dumps(self.meta.dump(), indent=1, sort_keys=True, default=str).encode()
-        self.blobs.put(f"backups/meta/{stamp}.json", backup, "application/json")
+        stamp: str | None = now.strftime("%Y-%m-%d")
+        dump = self.meta.dump()
+        if any(p["id"] != EXAMPLE_ID for p in dump["projects"]):
+            backup = json.dumps(dump, indent=1, sort_keys=True, default=str).encode()
+            self.blobs.put(f"backups/meta/{stamp}.json", backup, "application/json")
+        else:
+            # A store with nothing of its own is new, or has lost its records: writing its
+            # dump could replace the day's good backup, the one a restore would want.
+            stamp = None
         return {"pruned_versions": pruned, "purged_projects": purged, "backup": stamp}
 
     def _prune(self, project: ProjectRecord, now: datetime) -> int:

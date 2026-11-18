@@ -2,8 +2,10 @@
 
     python -m service.service [--host 0.0.0.0] [--port 8000] [--memory]
 
-Storage is Supabase and R2 as set in ``service/config.py``; ``--memory`` keeps everything
-in memory instead (lost on exit), for trying the service locally.
+Storage is a local SQLite file for the project records and Cloudflare R2 for the files, and
+the service is reachable only at URLs that carry its access token; all of it is set through
+environment variables (``service/config.py``). ``--memory`` keeps everything in memory
+instead (lost on exit) and needs no settings, for trying the service locally.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import config, deployment
 from .api import install_error_handlers, router
+from .auth import HideToken, PathToken, check_token
 from .projects import Projects
 from .store import BlobStore, MemoryBlobStore, MemoryMetaStore, MetaStore
 from .tools import build_mcp
@@ -28,11 +31,13 @@ log = logging.getLogger("epm.service")
 
 
 def create_app(
-    meta: MetaStore, blobs: BlobStore, maintenance: bool = False, **options: Any
+    meta: MetaStore, blobs: BlobStore, maintenance: bool = False, token: str = "", **options: Any
 ) -> FastAPI:
-    """The service over any stores. ``maintenance`` runs the retention and backup job daily."""
+    """The service over any stores. ``maintenance`` runs the retention and backup job daily.
+    ``token`` is the access token the app is served behind (``gated``), for links in MCP
+    results."""
     projects = Projects(meta, blobs, **options)
-    mcp = build_mcp(projects)
+    mcp = build_mcp(projects, token)
     # stateless: no MCP sessions to lose when the host restarts or scales the service
     mcp_app = mcp.streamable_http_app(
         streamable_http_path="/mcp", stateless_http=True, json_response=True, host="0.0.0.0"
@@ -71,6 +76,11 @@ def create_app(
     return app
 
 
+def gated(app: FastAPI, token: str):
+    """``app`` reachable only at URLs that carry ``token`` (see auth.py)."""
+    return PathToken(app, token)
+
+
 async def _maintain_forever(projects: Projects) -> None:
     while True:
         try:
@@ -81,18 +91,17 @@ async def _maintain_forever(projects: Projects) -> None:
         await asyncio.sleep(deployment.MAINTENANCE_INTERVAL)
 
 
-def cloud_stores() -> tuple[MetaStore, BlobStore]:
+def stores(settings: config.Config) -> tuple[MetaStore, BlobStore]:
+    """The deployment's storage: records in SQLite on this machine, files in R2."""
     from .store.r2 import R2BlobStore
-    from .store.supabase import SupabaseMetaStore
+    from .store.sqlite import SqliteMetaStore
 
-    if not config.configured():
-        raise SystemExit(
-            "service/config.py still has placeholder credentials: fill in Supabase and R2, "
-            "or run with --memory"
-        )
-    meta = SupabaseMetaStore(config.SUPABASE_URL, config.SUPABASE_SERVICE_ROLE_KEY)
+    meta = SqliteMetaStore(settings.database)
     blobs = R2BlobStore(
-        config.R2_ACCOUNT_ID, config.R2_ACCESS_KEY_ID, config.R2_SECRET_ACCESS_KEY, config.R2_BUCKET
+        settings.r2_account_id,
+        settings.r2_access_key_id,
+        settings.r2_secret_access_key,
+        settings.r2_bucket,
     )
     return meta, blobs
 
@@ -106,12 +115,29 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--memory", action="store_true", help="keep everything in memory")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
+    settings = config.load()
+    try:
+        token = check_token(settings.api_token) if settings.api_token else ""
+    except ValueError as e:
+        raise SystemExit(str(e)) from None
     if args.memory:
         meta, blobs = MemoryMetaStore(), MemoryBlobStore()
     else:
-        meta, blobs = cloud_stores()
-    app = create_app(meta, blobs, maintenance=not args.memory)
-    # Render terminates TLS in front of the service, so trust its forwarded headers
+        if settings.missing():
+            raise SystemExit(
+                f"set {', '.join(settings.missing())} in the environment (see "
+                "service/config.py), or run with --memory"
+            )
+        meta, blobs = stores(settings)
+        log.info("records in %s, files in R2 bucket '%s'", settings.database, settings.r2_bucket)
+    app: Any = create_app(meta, blobs, maintenance=not args.memory, token=token)
+    if token:
+        app = gated(app, token)
+        for name in ("uvicorn.access", "uvicorn.error"):
+            logging.getLogger(name).addFilter(HideToken(token))
+    else:
+        log.warning("no API_TOKEN: the service is open to anyone who can reach it")
+    # a reverse proxy terminates TLS in front of the service, so trust its forwarded headers
     uvicorn.run(app, host=args.host, port=args.port, proxy_headers=True, forwarded_allow_ips="*")
 
 

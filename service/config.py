@@ -1,27 +1,62 @@
-"""The service's credentials.
+"""The deployment's secrets and paths, read from environment variables.
 
-The alpha keeps them here, in code, on purpose. On `main` this file keeps its placeholders;
-the real values live only in the copy on the `web-backend` branch, which
-`scripts/split-branches.sh` never overwrites. Everything else the deployment needs is in
-`deployment.py`, which updates from `main` as usual. Anyone who can read the repository can
-read the credentials, so rotate them and move them to environment variables before the
-repository or the app is shared further.
+Nothing secret is kept in the repository. Set these where the service runs (a ``.env`` file
+for Docker Compose, for example):
+
+    API_TOKEN              the secret in the service's URLs, at least 32 URL-safe characters
+    R2_ACCOUNT_ID          Cloudflare account ID
+    R2_ACCESS_KEY_ID       R2 API token with Object Read & Write on the bucket
+    R2_SECRET_ACCESS_KEY
+    R2_BUCKET              the bucket for model archives, files and outputs (default: epm)
+    EPM_DATA               the directory of the records database (default: data)
+
+Everything that isn't secret is in ``deployment.py``.
 """
 
 from __future__ import annotations
 
-# Supabase: Project Settings → API. Use the service-role key (server-side only).
-SUPABASE_URL = "https://YOUR-PROJECT-REF.supabase.co"
-SUPABASE_SERVICE_ROLE_KEY = "YOUR-SUPABASE-SERVICE-ROLE-KEY"
+import os
+from dataclasses import dataclass
+from pathlib import Path
 
-# Cloudflare R2: R2 → Manage API tokens (Object Read & Write on the bucket).
-R2_ACCOUNT_ID = "YOUR-CLOUDFLARE-ACCOUNT-ID"
-R2_ACCESS_KEY_ID = "YOUR-R2-ACCESS-KEY-ID"
-R2_SECRET_ACCESS_KEY = "YOUR-R2-SECRET-ACCESS-KEY"
-R2_BUCKET = "epm"
+DATABASE_NAME = "epm.db"
 
 
-def configured() -> bool:
-    """Whether the placeholders have been replaced."""
-    values = [SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, R2_ACCOUNT_ID, R2_ACCESS_KEY_ID]
-    return not any("YOUR-" in v for v in values + [R2_SECRET_ACCESS_KEY])
+@dataclass(frozen=True)
+class Config:
+    api_token: str
+    r2_account_id: str
+    r2_access_key_id: str
+    r2_secret_access_key: str
+    r2_bucket: str
+    data: Path
+
+    @property
+    def database(self) -> Path:
+        return self.data / DATABASE_NAME
+
+    def missing(self) -> list[str]:
+        """The required environment variables that are not set."""
+        required = {
+            "API_TOKEN": self.api_token,
+            "R2_ACCOUNT_ID": self.r2_account_id,
+            "R2_ACCESS_KEY_ID": self.r2_access_key_id,
+            "R2_SECRET_ACCESS_KEY": self.r2_secret_access_key,
+        }
+        return [name for name, value in required.items() if not value]
+
+
+def load(env: dict[str, str] | None = None) -> Config:
+    env = dict(os.environ) if env is None else env
+
+    def get(name: str, default: str = "") -> str:
+        return env.get(name, "").strip() or default
+
+    return Config(
+        api_token=get("API_TOKEN"),
+        r2_account_id=get("R2_ACCOUNT_ID"),
+        r2_access_key_id=get("R2_ACCESS_KEY_ID"),
+        r2_secret_access_key=get("R2_SECRET_ACCESS_KEY"),
+        r2_bucket=get("R2_BUCKET", "epm"),
+        data=Path(get("EPM_DATA", "data")),
+    )

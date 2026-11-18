@@ -18,17 +18,18 @@ What that gets you:
 - **An AI assistant can build and edit the model for you**, and you can edit it yourself in the web app. Both work on the same model.
 - **Checks run all the time.** "Does the balance sheet balance?" is shown at the top of the screen.
 
-> **This is an early test version.** There is no login. Anyone with a project's link can
-> see and change it. **Do not put real or confidential numbers in it.**
+> **There is no login.** Access is by a private link that contains a secret token. Anyone
+> who has that link can see and change every project, so keep it to yourself.
 
 ---
 
 ## Step 1: Connect the AI assistant
 
-You only do this once. You need this link:
+You only do this once. You need your service's private link, which looks like this (ask
+whoever runs the service for the real one):
 
 ```
-https://epm-nm1g.onrender.com/mcp
+https://<host>/mcp/<token>
 ```
 
 Copy it. Then follow the steps for the assistant you use.

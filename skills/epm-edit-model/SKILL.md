@@ -1,6 +1,6 @@
 ---
 name: epm-edit-model
-description: Inspect, change, extend, fix or run scenarios on an existing epm financial model through the epm MCP connector at https://epm-nm1g.onrender.com/mcp. Use when the user asks to change an assumption, add or rename metrics, fix errors or failing checks, add tables, checks or sensitivities, compare scenarios, or undo or roll back changes in an epm project.
+description: Inspect, change, extend, fix or run scenarios on an existing epm financial model through the epm MCP connector. Use when the user asks to change an assumption, add or rename metrics, fix errors or failing checks, add tables, checks or sensitivities, compare scenarios, or undo or roll back changes in an epm project.
 ---
 
 # Edit an epm model
@@ -17,7 +17,7 @@ function and diagnostic.
 
 - **The connector.** You need the epm tools (`search_projects`, `show`, `apply_batch`, ...).
   If they aren't available, ask the user to add the epm connector, a remote MCP server at
-  `https://epm-nm1g.onrender.com/mcp`, and stop there.
+  their epm service's private address (`https://<host>/mcp/<token>`), and stop there.
 - **The project.** Every call needs its `project_id`. If the user gave a name instead, use
   `search_projects`; if several match, ask which one. The example, `example-lbo`, is
   read-only: offer `duplicate_project` and work on the copy.

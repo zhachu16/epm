@@ -1,6 +1,6 @@
 ---
 name: epm-create-model
-description: Build a new financial model (DCF, LBO, budget, three-statement or operating model) as a project in epm, through the epm MCP connector at https://epm-nm1g.onrender.com/mcp. Use when the user asks to create, build, set up or start a model in epm, including starting from the example LBO.
+description: Build a new financial model (DCF, LBO, budget, three-statement or operating model) as a project in epm, through the epm MCP connector. Use when the user asks to create, build, set up or start a model in epm, including starting from the example LBO.
 ---
 
 # Create an epm model
@@ -17,7 +17,8 @@ function and diagnostic. Read it before writing formulas you are unsure of.
 
 - **The connector.** You need the epm tools (`create_project`, `apply_batch`, `validate`,
   ...). If they aren't available, ask the user to add the epm connector, a remote MCP server
-  at `https://epm-nm1g.onrender.com/mcp`, and stop there. Don't imitate the tools.
+  at their epm service's private address (`https://<host>/mcp/<token>`), and stop there.
+  Don't imitate the tools.
 - **The brief.** Know the model type, the periods (first and last year, which are actuals),
   the currency and units, and the outputs the user cares about. Ask only for what you can't
   sensibly assume, and state the assumptions you made.

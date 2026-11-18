@@ -15,12 +15,12 @@ Notes for agents and people changing this repository. To *use* epm to build mode
 | `epm/sources/`, `epm/package/`, `epm/analysis/` | CSV/XLSX mapping, `.epm` archives, sweeps and analyses. |
 | `epm/cli/`, `epm/server/` | `fm` (Typer) and `fm serve` (FastAPI); the CLI forwards to a running server. |
 | `frontend-local/` | The local app's UI, served by `fm serve`. A standalone Vite + React app with its own `package.json`. |
-| `service/` | The cloud service: projects in Supabase and R2, an HTTP API and an MCP endpoint over `epm`. `service/service.py` runs it. |
+| `service/` | The cloud service: project records in SQLite, files in R2, an HTTP API and an MCP endpoint over `epm`. `service/service.py` runs it. |
 | `frontend-web/` | The cloud web app, hosted on Vercel. A standalone Vite + React app, separate from `frontend-local`. |
 | `examples/lbo/` | The sample LBO, checked by golden tests against an independent calculation. |
 | `benchmarks/run.py` | Timings for runs, edits and 1k-scenario sweeps. |
 | `skills/` | Agent Skills for working on models through the hosted service's MCP connector: `epm-create-model` and `epm-edit-model`. |
-| `scripts/split-branches.sh`, `render.yaml` | Deployment: the generated `local-app`, `web-frontend` and `web-backend` branches, and the Render blueprint. See [`docs/deployment.md`](docs/deployment.md). |
+| `scripts/split-branches.sh`, `service/Dockerfile` | Deployment: the generated `local-app`, `web-frontend` and `web-backend` branches, and the service's image. See [`docs/deployment.md`](docs/deployment.md). |
 
 ## Checks
 
@@ -81,16 +81,18 @@ CI runs all of these. The end-to-end tests need the built UI and a Chromium for 
 - **API shapes.** The frontends' types live in `frontend-local/src/api/types.ts` and
   `frontend-web/src/api/types.ts`; keep them in step with what `epm/server/app.py` and
   `service/api.py` return. Both frontends read the snapshot from `workspace_snapshot()`.
-- **The service is stateless.** Each request loads a project version into a fresh
+- **Requests are stateless.** Each request loads a project version into a fresh
   `Workspace`; a commit saves a new version. Keep per-request state out of `Projects`
-  except caches that are safe to lose (version archives, calculated values).
+  except caches that are safe to lose (version archives, calculated values). What lasts is
+  in the stores: records in SQLite (`service/store/sqlite.py`), files in R2. A new store
+  must pass the shared tests in `service/tests/test_store.py`.
 - **Change `main`, not the deployment branches.** `local-app`, `web-frontend` and
   `web-backend` are rebuilt from `main` after CI passes; edits made on them are overwritten.
   Their READMEs are `scripts/branch-readmes/<branch>.md`; the local-app one is tested like
-  `README.md`. The exception is `service/config.py` on `web-backend`: it holds the
-  deployment's credentials, is edited there only, and is kept when the branch is rebuilt.
-  Never put real credentials on `main`, and keep everything that isn't secret in
-  `service/deployment.py`, which updates from `main`.
+  `README.md`.
+- **No secrets in the repository.** It is public. Credentials and the access token are
+  environment variables read by `service/config.py`; everything that isn't secret is in
+  `service/deployment.py`.
 - **One name per project.** A project's name and its model's `settings.name` are kept
   equal: creating, copying, importing and renaming a project write it into the model, and a
   batch or restore that changes `settings.name` renames the project.

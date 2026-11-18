@@ -6,7 +6,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    MPLBACKEND=Agg
+    MPLBACKEND=Agg \
+    EPM_DATA=/data
 
 WORKDIR /app
 
@@ -21,9 +22,13 @@ RUN pip install ".[plot]" -r service/requirements.txt
 COPY service ./service
 COPY examples ./examples
 
-RUN useradd --create-home --uid 10001 epm
+# /data holds the records database (epm.db). Mount a volume or a host directory there and
+# back it up: the model files are in R2, but which file is which project is recorded here.
+RUN useradd --create-home --uid 10001 epm \
+    && mkdir -p /data \
+    && chown epm:epm /data
 USER epm
+VOLUME /data
 
-# Render sets PORT (10000 by default); other hosts can too.
 EXPOSE 10000
 CMD ["sh", "-c", "exec python -m service.service --host 0.0.0.0 --port ${PORT:-10000}"]

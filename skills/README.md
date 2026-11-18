@@ -13,20 +13,21 @@ formulas, diagnostics), so each can be installed on its own.
 
 ## The connector
 
-Both skills need the epm MCP server:
+Both skills need the epm MCP server, at your service's address with its access token:
 
 ```text
-https://epm-nm1g.onrender.com/mcp
+https://<host>/mcp/<token>
 ```
 
-It speaks streamable HTTP and, during the alpha, needs no credentials.
+It speaks streamable HTTP. The token in the address is the only credential, so keep the
+address private.
 
 - **Claude (claude.ai, desktop):** Settings → Connectors → **Add custom connector**, with
   that URL.
 - **Claude Code:**
 
 ```text
-claude mcp add --transport http epm https://epm-nm1g.onrender.com/mcp
+claude mcp add --transport http epm https://<host>/mcp/<token>
 ```
 
 ## Installing the skills

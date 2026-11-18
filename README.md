@@ -15,7 +15,7 @@ agents over MCP. Both use the same engine.
 | --- | --- |
 | [`epm/`](epm) | The engine: formulas, evaluation, editing operations, the `fm` CLI and `fm serve`. |
 | [`frontend-local/`](frontend-local) | The local app's UI, served by `fm serve`. |
-| [`service/`](service) | The hosted service: projects in Supabase and R2, an HTTP API and an MCP endpoint. |
+| [`service/`](service) | The hosted service: projects in SQLite and R2, an HTTP API and an MCP endpoint. |
 | [`frontend-web/`](frontend-web) | The hosted web app. |
 | [`examples/lbo/`](examples/lbo) | A complete sample LBO, checked against an independent calculation. |
 | [`skills/`](skills) | Agent Skills for building and editing models through the hosted MCP connector. |
@@ -27,7 +27,7 @@ agents over MCP. Both use the same engine.
 | --- | --- | --- |
 | `main` | Everything | All development. Make every change here. |
 | `local-app` | The engine, `fm`, `fm serve` and its UI | Installing and running epm locally |
-| `web-backend` | The engine and the service | Render deploys it as a Docker service |
+| `web-backend` | The engine and the service | Running the service with Docker on a server |
 | `web-frontend` | The web app | Vercel deploys it |
 
 The last three are generated from `main` by [`scripts/split-branches.sh`](scripts/split-branches.sh)
@@ -260,6 +260,6 @@ cd frontend-web && npm ci && npm run dev
 ```
 
 The [user guide](docs/user-guide.md) covers the web app, the HTTP API and MCP;
-[deployment](docs/deployment.md) covers Supabase, R2, Render and Vercel. For AI agents,
-add the MCP connector `https://epm-nm1g.onrender.com/mcp` and the
+[deployment](docs/deployment.md) covers the server, R2 and Vercel. For AI agents, add the
+service's MCP URL (`https://<host>/mcp/<token>`) as a connector and the
 [skills](skills/README.md) `epm-create-model` and `epm-edit-model`.

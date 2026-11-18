@@ -1,8 +1,8 @@
 # epm reference for agents
 
 The vocabulary shared by the epm skills: the MCP tools, operations, definitions, formulas
-and diagnostics. The epm connector is the MCP server at
-`https://epm-nm1g.onrender.com/mcp`; its tools are listed below.
+and diagnostics. The epm connector is the epm service's MCP server, at
+`https://<host>/mcp/<token>`; its tools are listed below.
 
 ## Tools
 

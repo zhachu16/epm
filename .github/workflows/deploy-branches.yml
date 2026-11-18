@@ -1,7 +1,7 @@
 name: Deployment branches
 
 # Once CI passes on main, regenerate local-app, web-frontend and web-backend from it.
-# Vercel deploys web-frontend and Render deploys web-backend when those branches move.
+# Vercel deploys web-frontend when it moves; the server that runs the service pulls web-backend.
 on:
   workflow_run:
     workflows: [CI]

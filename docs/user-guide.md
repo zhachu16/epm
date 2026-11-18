@@ -15,9 +15,9 @@ the two ways programs and agents reach the same projects, the **HTTP API** and *
 The [agent guide](agent-guide.md) is the reference for the model itself: definitions,
 formulas, operations and diagnostics.
 
-> **Alpha.** The app is open: there is no sign-in and anyone with the address can read and
-> change any project except the example. Don't put confidential data in it. Sign-in
-> (Supabase Auth) comes later; see [Access](#access).
+> **Access.** A deployed service answers only at addresses that contain its access token.
+> There are no accounts: whoever holds the token can read and change any project except
+> the example. See [Access](#access).
 
 ## Getting started
 
@@ -25,10 +25,10 @@ This walk-through copies the example LBO, changes an assumption, runs the model,
 exports the results, then edits the same project from an agent over MCP. Each step shows
 the web app and the same thing over HTTP.
 
-Set `EPM` to the service's address first; the commands below use it:
+Set `EPM` to the service's address first, with its access token; the commands below use it:
 
 ```bash
-export EPM=https://epm-service.example.com
+export EPM=https://epm.example.com/<token>
 ```
 
 ### 1. Open the app
@@ -126,11 +126,11 @@ curl -s -o atlas.epm "$EPM/api/projects/$PROJECT/export"
 
 ### 6. Edit the same project through MCP
 
-Connect an MCP client to `$EPM/mcp` (streamable HTTP; no credentials during the alpha).
-For Claude Code:
+Connect an MCP client to `$EPM/mcp` (streamable HTTP; the token in the address is the only
+credential). For Claude Code:
 
 ```text
-claude mcp add --transport http epm https://epm-service.example.com/mcp
+claude mcp add --transport http epm https://epm.example.com/mcp/<token>
 ```
 
 Then ask the agent, for example: *"In project p_7f3k9q2mzx, raise the tax rate to 30%,
@@ -302,17 +302,24 @@ A chart can also be downloaded without saving it:
 ## Sharing links
 
 A project's link is the web app's address plus `/p/{project_id}`; **Copy link** in the top
-bar copies it. During the alpha anyone with the link can open and edit the project. Once
-sign-in arrives, a recipient will sign in first and then land on the project. A link to a
-version, `/p/{project_id}?version=3`, opens that version read-only.
+bar copies it. Anyone who can open the web app can open and edit the project through the
+link. A link to a version, `/p/{project_id}?version=3`, opens that version read-only.
 
 ## Access
 
-During the alpha there is **no authentication**: the web app, the HTTP API and MCP are open
-to anyone who knows their address, and there are no API keys or tokens to configure. The
-only protection is that the example project can't be changed. Sign-in with Supabase Auth is
-planned; when it arrives the web app will ask you to sign in, and API and MCP clients will
-send a session token. Project IDs, links and the API stay the same.
+A deployed service is reachable only at addresses that contain its **access token**, a long
+random string set on the server:
+
+| Use | Address |
+| --- | --- |
+| The HTTP API | `https://<host>/<token>/api/...` |
+| MCP | `https://<host>/mcp/<token>`, or `https://<host>/<token>/mcp` |
+
+Every other address answers with an empty `404`. There are no accounts, API keys or
+sign-in: whoever holds the token can read and change every project, and the only further
+protection is that the example project can't be changed. So treat an address that contains
+the token as a secret, including MCP client settings and the web app's `VITE_API_URL`. A
+service started with `--memory` on your own machine has no token and is open.
 
 ## HTTP API reference
 
@@ -365,8 +372,8 @@ Batches, definitions and formulas are described in the [agent guide](agent-guide
 
 ## MCP reference
 
-The endpoint is `/mcp` on the service, over streamable HTTP, with no credentials during the
-alpha. Every tool that works on an existing project requires `project_id`; only
+The endpoint is `/mcp` on the service, over streamable HTTP: `$EPM/mcp`, or
+`https://<host>/mcp/<token>` in the form most MCP clients expect. Every tool that works on an existing project requires `project_id`; only
 `list_projects`, `search_projects`, `create_project` and `list_builtins` don't. Errors come
 back as tool errors whose text starts with the error code, for example
 `read_only_project: 'Example: LBO' is the read-only example; ...`.
@@ -402,4 +409,4 @@ python -m service.service --memory
 ```
 
 The web app (`frontend-web/`) then runs with `npm run dev` and talks to it; see its README.
-For real storage and hosting on Render and Vercel, see [deploying epm](deployment.md).
+For real storage and hosting on a server and Vercel, see [deploying epm](deployment.md).
