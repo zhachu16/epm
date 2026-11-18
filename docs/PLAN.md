@@ -16,10 +16,10 @@ and a structured API that agents can drive.
 | Undo history | Session only. It lives in memory in the `fm serve` process and is never written to the archive. |
 | Debt tranches | Separate 1-D metrics per tranche (`tlb_close`, `notes_close`, `revolver_close`). Totals are explicit formulas. |
 | Stack | Python 3.12+, pandas, numpy, openpyxl, pyarrow, FastAPI, Typer, pydantic v2. Frontend: React, TypeScript, Vite, Monaco, React Flow + elkjs, ECharts, xterm.js, react-resizable-panels, TanStack Query. |
-| Cloud delivery | A `service/` folder next to `epm/`, deployed together on Render as one long-running Docker container. The web frontend is hosted on Vercel. See section 12. |
-| Cloud storage | Supabase Postgres for metadata (projects, versions, outputs); Cloudflare R2 for `.epm` archives, inputs and outputs. |
-| Cloud auth | None during the alpha. The app and both APIs are open; Supabase Auth comes later. No API tokens or shared secrets. |
-| Branches | `main` holds everything. `local-app`, `web-frontend` (Vercel) and `web-backend` (Render) are generated from it after CI passes, each with only the folders its target needs. |
+| Cloud delivery | A `service/` folder next to `epm/`, deployed together as one long-running Docker container on a server. The web frontend is hosted on Vercel. See section 12. |
+| Cloud storage | A SQLite file on the server for metadata (projects, versions, outputs); Cloudflare R2 for `.epm` archives, inputs and outputs. (Metadata was in Supabase Postgres until the service moved to a single server.) |
+| Cloud auth | One access token in the URL path, set on the server: `/<token>/api/...` and `/mcp/<token>`; every other path is a `404`. No accounts or sign-in. |
+| Branches | `main` holds everything. `local-app`, `web-frontend` (Vercel) and `web-backend` (the server) are generated from it after CI passes, each with only the folders its target needs. |
 | Cloud concurrency | Stateless: each request loads the project's latest version, applies, and saves a new version. Every saved version can be restored. |
 
 ## Repository layout
@@ -389,12 +389,12 @@ served by `fm serve` from `frontend-local/dist`. The cloud web app is a separate
 | M11 | Editors (metric, table, source, function, JSON), analyses UI, Changes panel, terminal, Playwright end-to-end tests | done |
 | M12 | Hardening: performance pass (sweeps of 1k scenarios), docs, agent guide | done |
 | M13 | Repo split: `frontend/` → `frontend-local/`; the minimal epm changes for the cloud (12.2) | done |
-| M14 | Service storage: store interfaces, Supabase and R2 implementations, in-memory fakes, `schema.sql`, versions, example seeding | done |
+| M14 | Service storage: store interfaces, Supabase and R2 implementations, in-memory fakes, `schema.sql`, versions, example seeding (SQLite has since replaced Supabase) | done |
 | M15 | Service layer and HTTP API: projects, batches, runs, files, outputs, versions, undo | done |
 | M16 | MCP endpoint over the same service layer | done |
 | M17 | `frontend-web`: projects page, project view, autosave status, versions, files and outputs, share links, example copy, docs page | done |
 | M18 | Docs: user guide with HTTP and MCP usage and the onboarding example, all tested | done |
-| M19 | Deployment: Dockerfile and Render blueprint, Vercel config, deployment branches, smoke test, CI jobs | done |
+| M19 | Deployment: Dockerfile and Render blueprint (since removed), Vercel config, deployment branches, smoke test, CI jobs | done |
 
 The backend (M0–M9) is usable headless by agents before any UI work starts. M13–M19 were
 built on one branch, then promoted to `main`.
@@ -462,8 +462,8 @@ Edits preview and commit in about 25 ms. A synthetic model of 10,000 metrics bui
 
 ## 12. Cloud service (alpha)
 
-A hosted version of epm: a web app on Vercel, and a service on Render that runs the epm
-engine behind an HTTP API and an MCP endpoint. Projects live in Supabase (metadata) and R2
+A hosted version of epm: a web app on Vercel, and a service on a server that runs the epm
+engine behind an HTTP API and an MCP endpoint. Projects live in SQLite (metadata) and R2
 (files). The local app (`fm`, `fm serve`, `frontend-local`) keeps working as it does today.
 
 ### 12.1 Principles
@@ -476,12 +476,12 @@ engine behind an HTTP API and an MCP endpoint. Projects live in Supabase (metada
 - **Stateless requests.** A request loads the project's current version, does its work and,
   if it changed the model, saves a new version. No session, no in-memory undo stack, no
   pending proposals in the cloud. Undo is restoring an earlier version (12.5).
-- **Open alpha.** No authentication and no secrets. Every route takes an `Actor` from one
-  FastAPI dependency, `get_actor()`, which returns an anonymous actor for now; Supabase Auth
-  replaces it later without touching the routes.
-- **Hard-coded config.** Supabase and R2 credentials are placeholders in
-  `service/config.py`, filled in by hand for the MVP. Nothing reads them from the
-  environment.
+- **One token, no accounts.** A deployed service is wrapped in `auth.PathToken`: it answers
+  only at URLs that contain its access token. Every route still takes an `Actor` from one
+  FastAPI dependency, `get_actor()`, which returns an anonymous actor; sign-in could replace
+  it later without touching the routes.
+- **Config from the environment.** The token, the R2 credentials and the data directory are
+  environment variables read by `service/config.py`. Nothing secret is in the repository.
 
 ### 12.2 Changes to epm
 
@@ -503,18 +503,19 @@ Kept minimal:
 service/
   service.py          entry point: builds the stores from config and the FastAPI app;
                       `python -m service.service [--memory]`
-  config.py           hard-coded Supabase URL and key, R2 account, keys and bucket (placeholders)
+  config.py           the access token, R2 credentials and data directory, from the environment
+  auth.py             the access token in the URL path; masking it in logs
   projects.py         the service layer: projects, versions, batches, runs, files, outputs
   api.py              HTTP routes under /api
   tools.py            MCP tools, mounted at /mcp
   actor.py            get_actor(): the auth seam, anonymous for now
   store/
     base.py           MetaStore and BlobStore interfaces
-    supabase.py       MetaStore on Supabase (supabase-py)
+    sqlite.py         MetaStore on a local SQLite file
     r2.py             BlobStore on R2 (boto3, S3 API)
     memory.py         in-memory fakes for tests and local runs
-  schema.sql          Supabase tables and the commit_version function
-  requirements.txt    the service's dependencies on top of epm (supabase, boto3, mcp)
+  migrate.py          load records from a daily backup, a dump file or the old Supabase project
+  requirements.txt    the service's dependencies on top of epm (boto3, mcp)
   Dockerfile          builds epm and the service; build context is the repo root
   tests/              pytest suites against the in-memory stores
 ```
@@ -524,7 +525,7 @@ so tests and a local `python -m service.service --memory` run use the in-memory 
 
 ### 12.4 Storage
 
-**Supabase (Postgres)**
+**SQLite** (`epm.db` in the data directory, WAL mode)
 
 | Table | Columns |
 | --- | --- |
@@ -532,10 +533,12 @@ so tests and a local `python -m service.service --memory` run use the in-memory 
 | `versions` | `project_id`, `number`, `blob_key`, `label`, `source` (`create`, `ui`, `mcp`, `import`, `restore`), `ops`, `bytes`, `sha256`, `created_at`; unique `(project_id, number)` |
 | `outputs` | `id`, `project_id`, `version`, `kind` (`run`, `sweep`, `analysis`, `plot`), `name`, `blob_key`, `content_type`, `bytes`, `created_at` |
 
-- **Commits are atomic.** The archive is uploaded to R2 first under a new key, then the
-  Postgres function `commit_version(project_id, expected_version, ...)` inserts the version
-  row and moves `current_version` only if it still equals `expected_version`. Otherwise it
-  fails with `version_conflict` and the orphaned blob is removed.
+- **Commits are atomic.** The archive is uploaded to R2 first under a new key, then
+  `commit_version(version, expected)` inserts the version row and moves `current_version`
+  in one transaction, only if it still equals `expected`. Otherwise it fails with
+  `version_conflict` and the orphaned blob is removed.
+- **One writer.** The file is opened by one service process; run one container per data
+  directory.
 - **Search** matches `name` and `description` (case-insensitive), newest first, excluding
   deleted projects.
 
@@ -550,7 +553,8 @@ backups/meta/{date}.json                       daily export of the three tables
 Version blobs are immutable, so the service keeps a small on-disk cache of them in the
 container. Calculated values are kept in an in-process `ValueCache` per project; it is safe
 across versions because step fingerprints key it, and losing it on a redeploy only costs
-time. Nothing authoritative lives on the container's disk.
+time. The one authoritative thing on the server's disk is `epm.db`, on a mounted volume; the
+daily export above, or a continuous replica, backs it up.
 
 ### 12.5 Service layer
 
@@ -606,7 +610,7 @@ All under `/api`, JSON in and out, errors as `{code, message}`. CORS allows any 
 | `GET /projects/{id}/outputs` · `GET /projects/{id}/outputs/{oid}` | List and download outputs, including plot PNGs |
 | `GET /projects/{id}/versions` · `GET /projects/{id}/versions/{n}/export` | History; download a version |
 | `POST /projects/{id}/versions/{n}/restore` · `POST /projects/{id}/undo` | Recover |
-| `GET /health` | Liveness for Render |
+| `GET /health` | Liveness |
 
 ### 12.7 MCP
 
@@ -647,10 +651,9 @@ points it at the service; `vercel.json` rewrites routes to `index.html`.
   and analysis plots (PNG) saved as outputs.
 - **Example project.** A read-only banner and a **Make an editable copy** button; editors
   are disabled.
-- **Share.** A **Copy link** button gives `/p/{project_id}`. During the alpha anyone with
-  the link can open and edit the project; once Supabase Auth lands, the same link asks the
-  recipient to sign in first. An `AuthGate` component already wraps the routes and lets
-  everyone through.
+- **Share.** A **Copy link** button gives `/p/{project_id}`. Anyone who can open the web app
+  can open and edit the project through the link. An `AuthGate` component wraps the routes
+  and lets everyone through; sign-in would go there.
 - **Docs page.** Renders `docs/user-guide.md`, copied into the bundle by a prebuild script
   so the package builds on its own.
 
@@ -668,23 +671,21 @@ points it at the service; `vercel.json` rewrites routes to `index.html`.
 
 ### 12.10 Deployment and CI
 
-- **Render.** `service/Dockerfile` (built from the repository root) installs epm with its
-  plot extra and `service/requirements.txt`, runs as a non-root user, and starts
-  `python -m service.service --host 0.0.0.0 --port $PORT`. `render.yaml` is the blueprint:
-  one Docker web service on the `web-backend` branch, health-checked at `/api/health`. The
+- **The server.** `service/Dockerfile` (built from the repository root) installs epm with its
+  plot extra and `service/requirements.txt`, runs as a non-root user, keeps `epm.db` in the
+  `/data` volume, and starts `python -m service.service --host 0.0.0.0 --port $PORT`. It
+  runs from the `web-backend` branch behind a reverse proxy that terminates TLS. The
   retention and backup job runs daily inside the service.
-- **Supabase.** Apply `service/schema.sql` once.
 - **Vercel.** Root directory `frontend-web`, production branch `web-frontend`, build
-  `npm run build`, output `dist`, `VITE_API_URL` set to the Render URL.
+  `npm run build`, output `dist`, `VITE_API_URL` set to the service's URL with its token.
 - **Branches.** `scripts/split-branches.sh` builds `local-app`, `web-frontend` and
   `web-backend` from `main`, each with only what its target needs, adding a commit to each
   branch whose files changed (never force-pushing). The *Deployment branches* workflow runs
-  it after CI passes on `main`; CI itself skips those branches. `web-backend` keeps its own
-  `service/config.py`, which holds the credentials; on `main` it has placeholders.
+  it after CI passes on `main`; CI itself skips those branches.
 - **Smoke test.** `python -m service.smoke URL` checks a deployed service end to end
   (health, copy, edit, run, export, MCP) and deletes what it created. CI builds the Docker
   image and runs the smoke test against it.
-- **Manual steps** (accounts, credentials, connecting Render and Vercel) are in
+- **Manual steps** (accounts, credentials, the server and Vercel) are in
   [deployment.md](deployment.md).
 - **CI.** The existing jobs, with `frontend` renamed to `frontend-local`, plus a `service`
   job (tests, Docker build, smoke test), a `frontend-web` job (typecheck, unit tests, build)
@@ -695,8 +696,8 @@ points it at the service; `vercel.json` rewrites routes to `index.html`.
 - **epm changes.** Besides `workspace_snapshot` and the in-memory archive helpers, the
   in-process `fm` runner moved out of `Session` into `run_cli(ws, argv)`, so the service
   answers `show`, `list`, `validate` and `table show` with exactly the CLI's JSON.
-- **Running.** `python -m service.service` (Supabase and R2 from `config.py`) or
-  `--memory`. It refuses to start while `config.py` still has placeholders.
+- **Running.** `python -m service.service` (SQLite and R2, set through the environment) or
+  `--memory`. It refuses to start while the token or the R2 credentials are missing.
 - **Uploads are raw bodies**, not multipart: `POST /api/projects/import?name=` with the
   `.epm` bytes, and `PUT /api/projects/{id}/files/{path}` with the file. A file upload is a
   `file` op, so it is validated and versioned like any other edit. Uploads are capped at
@@ -751,13 +752,12 @@ points it at the service; `vercel.json` rewrites routes to `index.html`.
   untrusted-code sandbox. Document this clearly.
 - **Solver convergence.** Use damping and a clear failure status, and fall back to
   opening-balance interest if needed.
-- **Open alpha.** Anyone who finds the service URL can read, edit and delete any project
-  except the example, and run custom functions on the server. Versions, soft delete and
-  backups make damage recoverable; Supabase Auth closes it. Don't put real deal data in the
-  alpha.
-- **Hard-coded credentials.** Anyone with access to the repository has the Supabase and R2
-  keys. Rotate them, and move them to environment variables, before the repository or the
-  app is shared further.
+- **One shared token.** Anyone who holds the access token can read, edit and delete any
+  project except the example, and run custom functions on the server. The token is part of
+  the web app's build, so it is only as private as the web app's address. Versions, soft
+  delete and backups make damage recoverable.
+- **Credentials in history.** Early commits of `web-backend` carried the Supabase and R2
+  keys in `service/config.py`. They stay in the public history: those keys must be rotated.
 - **Per-request cost.** Stateless requests rebuild the engine and start the function worker
   each time. The blob and value caches keep this to a fraction of a second for the sample
   LBO; if it isn't enough, keep recently used workspaces in memory keyed by

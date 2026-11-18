@@ -10,3 +10,6 @@ node_modules/
 
 # regenerable calculated values in unpacked models
 cache/
+
+# the service's records database when it runs from a checkout (EPM_DATA)
+/data/

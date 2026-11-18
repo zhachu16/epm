@@ -19,12 +19,12 @@ earlier versions can be viewed and restored. It talks to the epm service (the
 
 1. Import this repository in Vercel and set the **Root Directory** to `frontend-web`.
    `frontend-web/vercel.json` sets the framework (Vite), the build and the route rewrites.
-2. Set the environment variable **`VITE_API_URL`** to the service's URL, such as
-   `https://epm-service.onrender.com`, with no trailing slash. It is read at build time,
-   so redeploy after changing it.
+2. Set the environment variable **`VITE_API_URL`** to the service's URL with its access
+   token, such as `https://epm.example.com/<token>`, with no trailing slash. It is read at
+   build time, so redeploy after changing it.
 3. Under **Settings → Git**, set the **Production Branch** to `web-frontend`.
 
-The full setup, including the service on Render, is in [deployment.md](docs/deployment.md).
+The full setup, including the service on a server, is in [deployment.md](docs/deployment.md).
 
 ## Run it locally
 
@@ -46,4 +46,5 @@ into `frontend-web/dist`, copying the guides from `docs/` into the bundle first.
   `?version=N` shows an earlier version read-only.
 - **`/docs`** shows the user guide and the agent guide.
 
-The alpha is open, with no sign-in; `AuthGate` is where sign-in will go.
+There is no sign-in: the service's access token, part of `VITE_API_URL`, is what lets the
+app in. `AuthGate` is where sign-in would go.
