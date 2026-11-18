@@ -7,15 +7,7 @@ import pytest
 
 from epm import EpmError, Workspace, load_model
 from epm.engine.cache import ValueCache
-from epm.package import (
-    Package,
-    pack,
-    package_bytes,
-    package_files,
-    read_package,
-    read_package_bytes,
-    unpack,
-)
+from epm.package import Package, pack, package_bytes, read_package, read_package_bytes, unpack
 
 FIXTURE = Path(__file__).parent / "fixtures" / "three_statement.json"
 
@@ -190,35 +182,3 @@ def test_bad_archives(tmp_path):
 def test_input_paths_are_checked(ws):
     with pytest.raises(EpmError, match="under 'inputs/'"):
         ws.set_input("secrets.csv", b"")
-
-
-def test_model_folder_reads_only_its_own_files(ws, tmp_path):
-    # a model.json may sit in Downloads, or next to epm.exe: nothing else there is read
-    ws.set_input("inputs/x.csv", b"1")
-    ws.save(tmp_path / "m.epm", include_cache=False)
-    unpack(tmp_path / "m.epm", tmp_path / "dir")
-    (tmp_path / "dir" / "epm.exe").write_bytes(b"MZ" * 1000)
-    (tmp_path / "dir" / "other").mkdir()
-    (tmp_path / "dir" / "other" / "notes.txt").write_text("x")
-    pkg = read_package(tmp_path / "dir")
-    assert set(package_files(pkg)) == {"model.json", "inputs/x.csv"}
-    Workspace.open(tmp_path / "dir").save()
-    assert (tmp_path / "dir" / "epm.exe").is_file() and (tmp_path / "dir" / "other").is_dir()
-
-
-def test_cache_without_pyarrow(ws, tmp_path, monkeypatch):
-    """The slimmed Windows program has no pyarrow: series are recalculated, not saved."""
-    import epm.engine.cache as cache
-
-    ws.run()
-    saved = ws.save(tmp_path / "full.epm")  # with pyarrow: series in parquet files
-    monkeypatch.setattr(cache, "parquet_available", lambda: False)
-    reopened = Workspace.open(saved)  # the parquet files are ignored, not an error
-    after = reopened.run()
-    assert set(after.computed) >= {"revenue", "ebitda"}
-    for name, value in ws.run().values.items():
-        np.testing.assert_allclose(np.asarray(value, float), np.asarray(after.values[name], float))
-    path = reopened.save(tmp_path / "slim.epm")
-    names = zipfile.ZipFile(path).namelist()
-    assert "cache/index.json" in names and not [n for n in names if n.endswith(".parquet")]
-    assert Workspace.open(path).run().status["revenue"].state == "ok"

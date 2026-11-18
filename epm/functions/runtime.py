@@ -12,7 +12,6 @@ import signal
 import subprocess
 import sys
 import tempfile
-import time
 import weakref
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -45,47 +44,6 @@ def _shutdown_all() -> None:
         runtime.close()
 
 
-# How the OS stops a worker over its CPU limit. Windows has neither signal (nor the limit).
-_CPU_LIMIT_SIGNALS = {getattr(signal, n) for n in ("SIGXCPU", "SIGKILL") if hasattr(signal, n)}
-
-# A frozen program (the Windows epm.exe) has no ``python -m``: it starts itself again with
-# this flag and dispatches to the worker (see epm.desktop).
-WORKER_FLAG = "--epm-function-worker"
-
-
-def worker_command() -> list[str]:
-    if getattr(sys, "frozen", False):
-        return [sys.executable, WORKER_FLAG]
-    # -I: isolated mode, so the current directory and user site-packages are not on
-    # sys.path and a stray module there cannot shadow anything the worker imports
-    return [sys.executable, "-I", "-m", "epm.functions.worker"]
-
-
-def _pipe_ready(stream, timeout: float) -> bool:
-    """Whether ``stream`` has data, or has reached end of file, within ``timeout`` seconds."""
-    if sys.platform != "win32":
-        ready, _, _ = select.select([stream], [], [], timeout)
-        return bool(ready)
-    # select() takes only sockets on Windows, so poll the pipe, as multiprocessing does
-    import _winapi
-    import msvcrt
-
-    handle = msvcrt.get_osfhandle(stream.fileno())
-    deadline = time.monotonic() + timeout
-    delay = 0.0
-    while True:
-        try:
-            if _winapi.PeekNamedPipe(handle)[0]:
-                return True
-        except OSError:  # the worker closed its end: reading now gives end of file
-            return True
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return False
-        time.sleep(min(delay, remaining))
-        delay = min(max(delay * 2, 0.0002), 0.02)
-
-
 class FunctionRuntime:
     """One worker per runtime, started on the first call and restarted after a failure.
 
@@ -112,8 +70,10 @@ class FunctionRuntime:
 
     def _spawn(self) -> None:
         env = {**os.environ, "OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"}
+        # -I: isolated mode, so the current directory and user site-packages are not on
+        # sys.path and a stray module there cannot shadow anything the worker imports
         proc = subprocess.Popen(
-            worker_command(),
+            [sys.executable, "-I", "-m", "epm.functions.worker"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             env=env,
@@ -148,7 +108,8 @@ class FunctionRuntime:
 
     def _ready(self, timeout: float) -> bool:
         assert self._proc is not None and self._proc.stdout is not None
-        return _pipe_ready(self._proc.stdout, timeout)
+        ready, _, _ = select.select([self._proc.stdout], [], [], timeout)
+        return bool(ready)
 
     def _kill(self) -> None:
         if self._proc is not None:
@@ -203,7 +164,7 @@ class FunctionRuntime:
         except EOFError:
             code = self._proc.wait(5)
             self._kill()
-            if -code in _CPU_LIMIT_SIGNALS:
+            if code == -signal.SIGXCPU or code == -signal.SIGKILL:
                 raise FunctionCallError(
                     "cpu_limit",
                     f"{name}() exceeded its CPU limit of {self.limits.cpu_seconds} seconds",

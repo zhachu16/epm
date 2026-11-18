@@ -20,7 +20,6 @@ working on models on your disk. Nothing here needs an account or a network conne
 | [`examples/lbo/`](examples/lbo) | A complete sample LBO, checked against an independent calculation. |
 | [`docs/`](docs) | The [agent guide](docs/agent-guide.md) and the [design](docs/PLAN.md). |
 | [`tests/`](tests), [`benchmarks/`](benchmarks) | The test suite and timings. |
-| [`packaging/windows/`](packaging/windows) | `epm.exe`: this app as one Windows program. |
 
 **Agents** building or changing models should start with the
 [agent guide](docs/agent-guide.md). People working on epm itself: see
@@ -81,16 +80,6 @@ While it runs, `fm` commands for that model run inside the session, so edits fro
 agents and the browser share one history and appear live in the UI. Agents propose changes
 with `fm apply changes.json --propose`; they show up in the **Changes** panel with a diff
 and their effect on key outputs, ready to commit or reject.
-
-## Windows: one file
-
-[`packaging/windows`](packaging/windows) builds `epm.exe`, this app as a single Windows
-program that needs no Python, Node or network. Put it next to a `model.json` and double-click
-it, or drop a model onto it, and the model opens in the browser; `epm.exe fm ...` runs any
-`fm` command. CI builds it from pinned, hash-checked dependencies on every push to this
-branch and checks that it calculates exactly what the source does; download it from the
-run's artifacts. Its [README](packaging/windows/README.md) covers sharing models and
-rebuilding it.
 
 ## Building a model
 

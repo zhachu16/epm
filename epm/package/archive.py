@@ -63,14 +63,8 @@ def read_package(path: str | Path) -> Package:
     """Read a ``.epm`` archive, or a directory with the same layout."""
     path = Path(path)
     if path.is_dir():
-        # Only the package's own files: a model.json may sit in a folder full of other
-        # things (Downloads, or next to epm.exe), which are neither read nor kept.
-        candidates = [path / "model.json", path / "functions.py"]
-        for sub in ("inputs", "cache"):
-            if (path / sub).is_dir():
-                candidates += sorted((path / sub).rglob("*"))
         files = {}
-        for f in candidates:
+        for f in sorted(path.rglob("*")):
             rel = f.relative_to(path).as_posix()
             if f.is_file() and not f.is_symlink() and not set(f.parts) & _SKIP_NAMES:
                 files[rel] = f.read_bytes()
